@@ -12,8 +12,14 @@ const ChatBot: React.FC<ChatBotProps> = ({ onRouteDataUpdate }) => {
   const [message, setMessage] = useState<string>('');
   const [messageList, setMessageList] = useState<IMemberMessage[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  
+  const [userId, setUserId] = useState<string>(''); // 사용자 ID 설정
+
   const messageEndRef = useRef<HTMLDivElement>(null);
+
+  // 컴포넌트 마운트 시 사용자 ID 생성
+  useEffect(() => {
+    setUserId(`user-${Date.now()}`);
+  }, []);
 
   // 스크롤 자동 이동
   useEffect(() => {
@@ -23,64 +29,70 @@ const ChatBot: React.FC<ChatBotProps> = ({ onRouteDataUpdate }) => {
   // 초기 웰컴 메시지
   useEffect(() => {
     if (messageList.length === 0) {
-      setMessageList([{
-        user_type: UserType.BOT,
-        nick_name: 'Shopilot',
-        message: '안녕하세요! 쇼핑파일럿입니다. 필요한 물품을 알려주시면 최적의 경로를 안내해드릴게요.',
-        send_date: new Date()
-      }]);
+      setMessageList([
+        {
+          user_type: UserType.BOT,
+          nick_name: 'Shopilot',
+          message:
+            '안녕하세요! 쇼핑파일럿입니다. 필요한 물품을 알려주시면 최적의 경로를 안내해드릴게요.',
+          send_date: new Date(),
+        },
+      ]);
     }
   }, []);
 
   // 메시지 전송 함수
   const sendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    
+
     if (!message.trim()) return;
-    
+
     // 사용자 메시지 추가
     const userMessage: IMemberMessage = {
       user_type: UserType.USER,
       nick_name: '사용자',
       message: message,
-      send_date: new Date()
+      send_date: new Date(),
     };
-    
-    setMessageList(prev => [...prev, userMessage]);
+
+    setMessageList((prev) => [...prev, userMessage]);
     setIsLoading(true);
-    
+
     const currentMessage = message;
     setMessage('');
-    
+
     // API 호출
     try {
       console.log('API 호출 시작:', currentMessage);
-      
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: currentMessage })
+        body: JSON.stringify({ message: currentMessage, userId }),
       });
-      
+
       console.log('API 응답 상태:', response.status);
-      
+
       if (!response.ok) {
         throw new Error(`API 오류: ${response.status}`);
       }
-      
+
       const data = await response.json();
       console.log('API 응답 데이터:', data);
-      
+
       // 봇 응답 추가
-      setMessageList(prev => [...prev, {
-        user_type: UserType.BOT,
-        nick_name: 'Shopilot',
-        message: data.data?.message || '응답을 처리할 수 없습니다.',
-        send_date: new Date()
-      }]);
-      
+      setMessageList((prev) => [
+        ...prev,
+        {
+          user_type: UserType.BOT,
+          nick_name: 'Shopilot',
+          message: data.data?.message || '응답을 처리할 수 없습니다.',
+          send_date: new Date(),
+        },
+      ]);
+
       // 경로 데이터가 있으면 처리
       if (data.data?.routeData && onRouteDataUpdate) {
         console.log('경로 데이터:', data.data.routeData);
@@ -88,12 +100,15 @@ const ChatBot: React.FC<ChatBotProps> = ({ onRouteDataUpdate }) => {
       }
     } catch (error) {
       console.error('오류 발생:', error);
-      setMessageList(prev => [...prev, {
-        user_type: UserType.BOT,
-        nick_name: 'Shopilot',
-        message: '죄송합니다. 요청을 처리하는 중 오류가 발생했습니다.',
-        send_date: new Date()
-      }]);
+      setMessageList((prev) => [
+        ...prev,
+        {
+          user_type: UserType.BOT,
+          nick_name: 'Shopilot',
+          message: '죄송합니다. 요청을 처리하는 중 오류가 발생했습니다.',
+          send_date: new Date(),
+        },
+      ]);
     } finally {
       setIsLoading(false);
     }
@@ -104,14 +119,16 @@ const ChatBot: React.FC<ChatBotProps> = ({ onRouteDataUpdate }) => {
       {/* 채팅 메시지 영역 */}
       <div className="flex-1 p-4 overflow-y-auto">
         {messageList.map((msg, index) => (
-          <div 
-            key={index} 
-            className={`mb-4 ${msg.user_type === UserType.USER ? 'text-right' : 'text-left'}`}
+          <div
+            key={index}
+            className={`mb-4 ${
+              msg.user_type === UserType.USER ? 'text-right' : 'text-left'
+            }`}
           >
-            <div 
+            <div
               className={`inline-block p-3 rounded-lg ${
-                msg.user_type === UserType.USER 
-                  ? 'bg-blue-500 text-white' 
+                msg.user_type === UserType.USER
+                  ? 'bg-blue-500 text-white'
                   : 'bg-gray-200 text-gray-800'
               }`}
             >
@@ -122,7 +139,7 @@ const ChatBot: React.FC<ChatBotProps> = ({ onRouteDataUpdate }) => {
             </div>
           </div>
         ))}
-        
+
         {isLoading && (
           <div className="text-center py-2">
             <div className="inline-block p-2 bg-gray-100 rounded-lg">
@@ -130,15 +147,12 @@ const ChatBot: React.FC<ChatBotProps> = ({ onRouteDataUpdate }) => {
             </div>
           </div>
         )}
-        
+
         <div ref={messageEndRef} />
       </div>
-      
+
       {/* 입력 영역 */}
-      <form 
-        onSubmit={sendMessage} 
-        className="border-t p-4 flex gap-2"
-      >
+      <form onSubmit={sendMessage} className="border-t p-4 flex gap-2">
         <input
           type="text"
           value={message}

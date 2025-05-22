@@ -2,14 +2,17 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { extractShoppingItems } from '@/lib/utils';
-import { calculateOptimalRoute } from '@/lib/productDatabase';
+import { createRouteData } from '@/lib/productDatabase';
 import { RouteData } from '@/interfaces/route';
+import { processRAG } from '@/lib/rag';
+import { getConversationHistory, addToMemory } from '@/lib/memory';
 
 type ResponseData = {
   code: number;
   data: {
     message: string;
     routeData?: RouteData;
+    sources?: string[];
   } | null;
   message: string;
 };
@@ -42,20 +45,65 @@ export default async function handler(
   }
 
   try {
-    const { message } = req.body;
+    const { message, useRAG, userId = 'default-user' } = req.body;
 
-    console.log('API 요청 받음:', message);
+    console.log(
+      'API 요청 받음:',
+      message,
+      '(RAG 명시적 지정:',
+      useRAG !== undefined ? useRAG : '자동',
+      ')',
+    );
 
     // 쇼핑 아이템 추출
     const shoppingItems = extractShoppingItems(message);
     console.log('추출된 쇼핑 아이템:', shoppingItems);
 
+    // ===============================================
+    // RAG 사용 여부 자동 판단 (useRAG가 명시적으로 false로 지정되지 않은 경우)
+    // ===============================================
+    const shouldUseRAG = useRAG !== false; // 명시적으로 false인 경우만 RAG 비활성화
+
+    // 명시적으로 false가 아니면 RAG 사용 시도
+    if (shouldUseRAG) {
+      try {
+        console.log('RAG 처리 시작...');
+        const ragResult = await processRAG(message, userId);
+
+        if (ragResult) {
+          console.log('RAG 처리 성공!');
+
+          return res.status(200).json({
+            code: 200,
+            data: {
+              message: ragResult.answer,
+              routeData: ragResult.routeData || undefined, // null을 undefined로 변환
+              sources: ragResult.sources || undefined,
+            },
+            message: 'success',
+          });
+        }
+      } catch (ragError) {
+        console.error('RAG 처리 중 오류 발생:', ragError);
+        console.log('기본 모드로 폴백...');
+        // RAG 오류 시 기본 모드로 폴백 (계속 진행)
+      }
+    }
+
+    // ===============================================
+    // RAG가 비활성화되었거나 오류가 발생한 경우 기본 모드로 진행
+
+    // ===============================================
+
     // 경로 데이터 계산
     let routeData = undefined;
     if (shoppingItems.length > 0) {
-      routeData = calculateOptimalRoute(shoppingItems);
+      routeData = createRouteData(shoppingItems);
       console.log('계산된 경로 데이터:', routeData);
     }
+
+    // 이전 대화 내역 가져오기
+    const conversationHistory = await getConversationHistory(userId);
 
     // API 키가 없을 경우 간단한 응답
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -70,11 +118,14 @@ export default async function handler(
         botResponse = `안녕하세요! 쇼핑 파일럿입니다. 필요한 물품을 알려주시면 최적의 경로를 안내해드릴게요.`;
       }
 
+      // 메모리에 대화 추가
+      await addToMemory(userId, message, botResponse);
+
       return res.status(200).json({
         code: 200,
         data: {
           message: botResponse,
-          routeData,
+          routeData: routeData ?? undefined,
         },
         message: 'success',
       });
@@ -87,15 +138,12 @@ export default async function handler(
 
     // 추가 컨텍스트 구성
     let additionalContext = '';
-    if (routeData && routeData.items.length > 0) {
+    if (routeData && routeData.items && routeData.items.length > 0) {
       additionalContext = `
 사용자가 다음 물품을 찾고 있습니다: ${shoppingItems.join(', ')}.
 각 상품의 위치 정보입니다:
 ${routeData.items
-  .map(
-    (item, idx) =>
-      `${idx + 1}. ${item.name}: ${item.location} (${item.section})`,
-  )
+  .map((item, idx) => `${idx + 1}. ${item.name}: ${item.location}`)
   .join('\n')}
 
 쇼핑 경로 안내:
@@ -115,6 +163,21 @@ ${routeData.route
       `;
     }
 
+    const userPrompt = [];
+    // 이전 대화 내역이 있으면 포함
+    if (conversationHistory && conversationHistory.length > 0) {
+      userPrompt.push(`이전 대화 내역:\n${conversationHistory}`);
+    }
+
+    // 추가 컨텍스트가 있으면 포함
+    if (additionalContext) {
+      userPrompt.push(`\n\n${additionalContext}`);
+    }
+    // 현재 사용자 메시지 추가
+    userPrompt.push(`사용자 메시지: ${message}`);
+    // 최종 프롬프트 생성
+    const finalPrompt = userPrompt.join('\n\n');
+
     // Claude API 호출
     const response = await anthropic.messages.create({
       model: 'claude-3-7-sonnet-20250219',
@@ -123,9 +186,7 @@ ${routeData.route
       messages: [
         {
           role: 'user',
-          content: additionalContext
-            ? `${additionalContext}\n\n사용자 메시지: ${message}`
-            : message,
+          content: finalPrompt,
         },
       ],
     });
@@ -148,11 +209,13 @@ ${routeData.route
       assistantResponse = '응답을 처리할 수 없습니다.';
     }
 
+    await addToMemory(userId, message, assistantResponse);
+
     return res.status(200).json({
       code: 200,
       data: {
         message: assistantResponse,
-        routeData,
+        routeData: routeData ?? undefined,
       },
       message: 'success',
     });
