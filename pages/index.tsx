@@ -1,31 +1,106 @@
-// pages/index.tsx - isROSLIBLoaded prop 사용
+// pages/index.tsx - 사용자 ID 및 채팅 상태 영속성 보장
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import ChatBot from '@/components/ChatBot';
 import MarketMap from '@/components/MarketMap';
 import ROSLibRobotControl from '@/components/ROSLibRobotControl';
 import { RouteData } from '@/interfaces/route';
+import { IMemberMessage, UserType } from '@/interfaces/message';
 
 interface HomePageProps {
-  isROSLIBLoaded?: boolean; // _app.tsx에서 전달받는 prop
+  isROSLIBLoaded?: boolean;
 }
 
 const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
   const [routeData, setRouteData] = useState<RouteData | undefined>(undefined);
   const [robotPosition, setRobotPosition] = useState(undefined);
   const [activeTab, setActiveTab] = useState<'chat' | 'control'>('chat');
-  const [nucIP, setNucIP] = useState('192.168.0.100');
+  const [nucIP, setNucIP] = useState('172.19.30.218');
   const [isIPModalOpen, setIsIPModalOpen] = useState(false);
+  const [hasNewRoute, setHasNewRoute] = useState(false);
+
+  // 영속적인 채팅 상태 관리
+  const [persistentUserId, setPersistentUserId] = useState<string>('');
+  const [persistentMessages, setPersistentMessages] = useState<
+    IMemberMessage[]
+  >([]);
+  const [isChatInitialized, setIsChatInitialized] = useState(false);
+
+  const chatBotRef = useRef<any>(null);
+
+  // 초기화 시 사용자 ID 생성 및 웰컴 메시지 설정
+  useEffect(() => {
+    if (!isChatInitialized) {
+      const newUserId = `user-${Date.now()}-${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+      setPersistentUserId(newUserId);
+
+      // 초기 웰컴 메시지
+      const welcomeMessage: IMemberMessage = {
+        user_type: UserType.BOT,
+        nick_name: 'Shopilot',
+        message:
+          '안녕하세요! 쇼핑파일럿입니다. 필요한 물품을 알려주시면 최적의 경로를 안내해드릴게요.\n\n예시: "과자, 라면, 우유, 햄, 신발 사고싶어"',
+        send_date: new Date(),
+      };
+
+      setPersistentMessages([welcomeMessage]);
+      setIsChatInitialized(true);
+
+      console.log('🎯 HomePage: 영속적 사용자 ID 생성:', newUserId);
+    }
+  }, [isChatInitialized]);
 
   const handleRouteDataUpdate = (data: RouteData) => {
     console.log('경로 데이터 업데이트:', data);
     setRouteData(data);
-    setActiveTab('control'); // 경로 설정 시 로봇 제어 탭으로 전환
+    setHasNewRoute(true);
   };
 
   const handleRobotPositionUpdate = (position: any) => {
     setRobotPosition(position);
   };
+
+  const handleTabChange = (tab: 'chat' | 'control') => {
+    console.log('🔄 탭 변경:', activeTab, '->', tab);
+    setActiveTab(tab);
+    if (tab === 'control' && hasNewRoute) {
+      setHasNewRoute(false);
+    }
+  };
+
+  // 채팅 메시지 업데이트 핸들러
+  const handleMessagesUpdate = (messages: IMemberMessage[]) => {
+    setPersistentMessages(messages);
+    console.log('💬 메시지 상태 업데이트:', messages.length, '개');
+  };
+
+  // 채팅 초기화 핸들러
+  const handleChatReset = () => {
+    const welcomeMessage: IMemberMessage = {
+      user_type: UserType.BOT,
+      nick_name: 'Shopilot',
+      message: '채팅이 초기화되었습니다. 필요한 물품을 알려주세요!',
+      send_date: new Date(),
+    };
+    setPersistentMessages([welcomeMessage]);
+    console.log('🧹 채팅 초기화됨');
+  };
+
+  const checkROSLIBStatus = () => {
+    return {
+      propsLoaded: isROSLIBLoaded,
+      windowExists: typeof window !== 'undefined',
+      roslibExists: typeof window !== 'undefined' && !!(window as any).ROSLIB,
+      version:
+        typeof window !== 'undefined' && (window as any).ROSLIB
+          ? (window as any).ROSLIB.version
+          : null,
+    };
+  };
+
+  const roslibStatus = checkROSLIBStatus();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -48,15 +123,43 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
             <div className="flex items-center gap-4">
               {/* ROSLIB 상태 표시 */}
               <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg">
-                <div
-                  className={`w-3 h-3 rounded-full ${
-                    isROSLIBLoaded ? 'bg-green-500' : 'bg-yellow-500'
-                  }`}
-                />
-                <span className="text-sm font-medium">
-                  ROSLIB: {isROSLIBLoaded ? '준비됨' : '로딩중'}
-                </span>
+                <div className="flex flex-col items-center gap-1">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-3 h-3 rounded-full ${
+                        roslibStatus.roslibExists
+                          ? 'bg-green-500'
+                          : roslibStatus.propsLoaded
+                          ? 'bg-yellow-500'
+                          : 'bg-red-500'
+                      }`}
+                    />
+                    <span className="text-sm font-medium">
+                      ROSLIB:{' '}
+                      {roslibStatus.roslibExists
+                        ? '준비됨'
+                        : roslibStatus.propsLoaded
+                        ? '로딩중'
+                        : '대기'}
+                    </span>
+                  </div>
+                  {roslibStatus.version && (
+                    <span className="text-xs text-gray-500">
+                      v{roslibStatus.version}
+                    </span>
+                  )}
+                </div>
               </div>
+
+              {/* 세션 정보 (개발 모드에서만) */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 rounded-lg">
+                  <span className="text-xs text-blue-600">
+                    세션: {persistentUserId.slice(-6)} | 메시지:{' '}
+                    {persistentMessages.length}개
+                  </span>
+                </div>
+              )}
 
               {/* NUC IP 설정 */}
               <button
@@ -75,19 +178,67 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 max-w-7xl mx-auto">
           {/* 좌측: 챗봇 또는 로봇 제어 */}
           <div className="xl:col-span-1">
-            {/* ROSLIB가 로드되지 않았을 때 알림 */}
-            {!isROSLIBLoaded && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+            {/* ROSLIB 로드 상태 알림 */}
+            {!roslibStatus.roslibExists && (
+              <div
+                className={`border rounded-lg p-4 mb-4 ${
+                  roslibStatus.propsLoaded
+                    ? 'bg-yellow-50 border-yellow-200'
+                    : 'bg-red-50 border-red-200'
+                }`}
+              >
                 <div className="flex items-center gap-3">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-600"></div>
+                  <div
+                    className={`animate-spin rounded-full h-5 w-5 border-b-2 ${
+                      roslibStatus.propsLoaded
+                        ? 'border-yellow-600'
+                        : 'border-red-600'
+                    }`}
+                  ></div>
                   <div>
-                    <div className="font-medium text-yellow-800">
-                      시스템 초기화 중
+                    <div
+                      className={`font-medium ${
+                        roslibStatus.propsLoaded
+                          ? 'text-yellow-800'
+                          : 'text-red-800'
+                      }`}
+                    >
+                      {roslibStatus.propsLoaded
+                        ? '시스템 초기화 중'
+                        : 'ROSLIB 로드 실패'}
                     </div>
-                    <div className="text-sm text-yellow-600">
-                      ROSLIB.js 로드 대기 중...
+                    <div
+                      className={`text-sm ${
+                        roslibStatus.propsLoaded
+                          ? 'text-yellow-600'
+                          : 'text-red-600'
+                      }`}
+                    >
+                      {roslibStatus.propsLoaded
+                        ? 'ROSLIB.js 로드 대기 중...'
+                        : 'ROSLIB.js 스크립트 로드에 실패했습니다.'}
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* 새 경로 알림 */}
+            {hasNewRoute && activeTab === 'chat' && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-green-800 font-medium">
+                      새 쇼핑 경로가 준비되었습니다!
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => handleTabChange('control')}
+                    className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600"
+                  >
+                    확인하기
+                  </button>
                 </div>
               </div>
             )}
@@ -96,7 +247,7 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
             <div className="bg-white rounded-t-lg border-b">
               <div className="flex">
                 <button
-                  onClick={() => setActiveTab('chat')}
+                  onClick={() => handleTabChange('chat')}
                   className={`flex-1 py-3 px-4 text-sm font-medium rounded-tl-lg transition-colors ${
                     activeTab === 'chat'
                       ? 'bg-blue-500 text-white'
@@ -104,21 +255,26 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
                   }`}
                 >
                   💬 쇼핑 어시스턴트
+                  {activeTab !== 'chat' && persistentMessages.length > 1 && (
+                    <span className="ml-1 text-xs opacity-75">
+                      ({persistentMessages.length - 1})
+                    </span>
+                  )}
                 </button>
                 <button
-                  onClick={() => setActiveTab('control')}
+                  onClick={() => handleTabChange('control')}
                   className={`flex-1 py-3 px-4 text-sm font-medium rounded-tr-lg transition-colors relative ${
                     activeTab === 'control'
                       ? 'bg-blue-500 text-white'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
-                  disabled={!isROSLIBLoaded} // ROSLIB 로드 전까지 비활성화
+                  disabled={!roslibStatus.roslibExists}
                 >
                   🤖 로봇 제어
-                  {!isROSLIBLoaded && (
+                  {!roslibStatus.roslibExists && (
                     <span className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-500 rounded-full animate-pulse"></span>
                   )}
-                  {routeData && isROSLIBLoaded && (
+                  {hasNewRoute && roslibStatus.roslibExists && (
                     <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
                   )}
                 </button>
@@ -129,14 +285,23 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
             <div className="h-[70vh]">
               {activeTab === 'chat' ? (
                 <div className="h-full bg-white rounded-b-lg">
-                  <ChatBot onRouteDataUpdate={handleRouteDataUpdate} />
+                  {isChatInitialized && (
+                    <ChatBot
+                      ref={chatBotRef}
+                      userId={persistentUserId}
+                      initialMessages={persistentMessages}
+                      onRouteDataUpdate={handleRouteDataUpdate}
+                      onMessagesUpdate={handleMessagesUpdate}
+                      onChatReset={handleChatReset}
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="h-full">
                   <ROSLibRobotControl
                     routeData={routeData}
                     nucIP={nucIP}
-                    isROSLIBLoaded={isROSLIBLoaded} // prop 전달
+                    isROSLIBLoaded={roslibStatus.propsLoaded}
                     onRobotPositionUpdate={handleRobotPositionUpdate}
                   />
                 </div>
@@ -158,40 +323,69 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
             {/* ROSLIB 상태 */}
             <div
               className={`p-4 rounded-lg ${
-                isROSLIBLoaded
+                roslibStatus.roslibExists
                   ? 'bg-gradient-to-r from-green-50 to-green-100'
-                  : 'bg-gradient-to-r from-yellow-50 to-yellow-100'
+                  : roslibStatus.propsLoaded
+                  ? 'bg-gradient-to-r from-yellow-50 to-yellow-100'
+                  : 'bg-gradient-to-r from-red-50 to-red-100'
               }`}
             >
               <h3
                 className={`font-semibold mb-2 ${
-                  isROSLIBLoaded ? 'text-green-800' : 'text-yellow-800'
+                  roslibStatus.roslibExists
+                    ? 'text-green-800'
+                    : roslibStatus.propsLoaded
+                    ? 'text-yellow-800'
+                    : 'text-red-800'
                 }`}
               >
-                {isROSLIBLoaded ? '🟢 ROSLIB 준비됨' : '🟡 ROSLIB 로딩중'}
+                {roslibStatus.roslibExists
+                  ? '🟢 ROSLIB 준비됨'
+                  : roslibStatus.propsLoaded
+                  ? '🟡 ROSLIB 로딩중'
+                  : '🔴 ROSLIB 로드 실패'}
               </h3>
               <div
                 className={`text-sm ${
-                  isROSLIBLoaded ? 'text-green-700' : 'text-yellow-700'
+                  roslibStatus.roslibExists
+                    ? 'text-green-700'
+                    : roslibStatus.propsLoaded
+                    ? 'text-yellow-700'
+                    : 'text-red-700'
                 }`}
               >
-                <div>• 라이브러리: {isROSLIBLoaded ? '로드됨' : '로딩중'}</div>
-                <div>• 로봇 제어: {isROSLIBLoaded ? '사용가능' : '대기중'}</div>
-                <div>• NUC IP: {nucIP}:9090</div>
+                <div>
+                  • 스크립트:{' '}
+                  {roslibStatus.propsLoaded ? '로드됨' : '로드 실패'}
+                </div>
+                <div>
+                  • 객체: {roslibStatus.roslibExists ? '사용가능' : '대기중'}
+                </div>
+                <div>• 버전: {roslibStatus.version || 'Unknown'}</div>
+                <div>• NUC: {nucIP}:9090</div>
               </div>
             </div>
 
-            {/* 기존 상태 패널들... */}
+            {/* 경로 상태 */}
             <div className="bg-gradient-to-r from-blue-50 to-blue-100 p-4 rounded-lg">
               <h3 className="font-semibold text-blue-800 mb-2">📍 경로 상태</h3>
               <div className="text-sm text-blue-700">
-                {routeData ? (
+                {routeData && routeData.route && routeData.items ? (
                   <>
                     <div>• 매대: {routeData.route.length}개</div>
+                    <div>• 아이템: {routeData.items.length}개</div>
                     <div>
                       • 거리: {Math.round(routeData.total_distance / 10)}m
                     </div>
-                    <div>• 상태: 설정완료</div>
+                  </>
+                ) : routeData ? (
+                  <>
+                    <div>• 경로 데이터 로딩 중...</div>
+                    <div className="text-xs text-gray-500">
+                      route: {routeData.route ? '✅' : '❌'} | items:{' '}
+                      {routeData.items ? '✅' : '❌'} | distance:{' '}
+                      {routeData.total_distance || 0}
+                    </div>
                   </>
                 ) : (
                   <div>• 경로 설정 대기중</div>
@@ -199,29 +393,31 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
               </div>
             </div>
 
+            {/* 채팅 상태 */}
             <div className="bg-gradient-to-r from-purple-50 to-purple-100 p-4 rounded-lg">
               <h3 className="font-semibold text-purple-800 mb-2">
-                🤖 로봇 상태
+                💬 채팅 상태
               </h3>
               <div className="text-sm text-purple-700">
-                {robotPosition ? (
-                  <>
-                    <div>• 위치: 추적중</div>
-                    <div>• 연결: 활성</div>
-                    <div>• 상태: 정상</div>
-                  </>
-                ) : (
-                  <div>• 로봇 연결 대기중</div>
-                )}
+                <div>• 메시지: {persistentMessages.length}개</div>
+                <div>• 사용자 ID: {persistentUserId.slice(-6)}...</div>
+                <div>• 상태: {isChatInitialized ? '활성' : '초기화중'}</div>
+                <div>
+                  • 현재 탭: {activeTab === 'chat' ? '채팅' : '로봇제어'}
+                </div>
               </div>
             </div>
 
+            {/* 시스템 상태 */}
             <div className="bg-gradient-to-r from-orange-50 to-orange-100 p-4 rounded-lg">
               <h3 className="font-semibold text-orange-800 mb-2">⚡ 시스템</h3>
               <div className="text-sm text-orange-700">
                 <div>• Vector DB: 활성</div>
                 <div>• A* 알고리즘: 준비</div>
-                <div>• 웹소켓: {isROSLIBLoaded ? '준비됨' : '대기중'}</div>
+                <div>
+                  • 웹소켓: {roslibStatus.roslibExists ? '준비됨' : '대기중'}
+                </div>
+                <div>• 로봇: {robotPosition ? '연결됨' : '대기중'}</div>
               </div>
             </div>
           </div>
@@ -239,7 +435,7 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
                 type="text"
                 value={nucIP}
                 onChange={(e) => setNucIP(e.target.value)}
-                placeholder="192.168.0.100"
+                placeholder="172.19.30.218"
                 className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <p className="text-sm text-gray-500 mt-1">
@@ -270,7 +466,7 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
           <p className="mb-2">© 2025 Shopilot - Capstone Project</p>
           <p className="text-sm">
             ROSLIB.js + Next.js + Scout Mini Integration
-            {isROSLIBLoaded && (
+            {roslibStatus.roslibExists && (
               <span className="text-green-600 ml-2">✅ 시스템 준비됨</span>
             )}
           </p>
