@@ -311,7 +311,7 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
 
           {/* 우측: 실시간 지도 */}
           <div className="xl:col-span-2">
-            <div className="h-[70vh] bg-white rounded-lg shadow-lg">
+            <div className="w-full h-[60vh] bg-white rounded-lg shadow-lg">
               <MarketMap routeData={routeData} robotPosition={robotPosition} />
             </div>
           </div>

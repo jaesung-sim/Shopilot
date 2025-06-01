@@ -1,7 +1,7 @@
-// lib/utils.ts - 사과, 햄 추출 문제 해결 버전
+// lib/utils.ts - 햄, 차, 죽 등 한글자 음식명 인식 개선
 
 /**
- * 사용자 입력에서 쇼핑 아이템 목록을 추출 (필터링 로직 수정)
+ * 사용자 입력에서 쇼핑 아이템 목록을 추출 (한 글자 허용 목록 확장)
  */
 export function extractShoppingItems(text: string): string[] {
   console.log('🔍 원본 텍스트:', text);
@@ -177,11 +177,46 @@ export function extractShoppingItems(text: string): string[] {
         return false;
       }
 
-      // 한 글자 단어는 허용 목록에 있는 경우만 (사과, 햄 등은 2글자라 문제 없음)
-      if (
-        item.length === 1 &&
-        !['쌀', '콩', '김', '떡', '죽', '차', '술'].includes(item)
-      ) {
+      // 🔧 한 글자 단어 허용 목록 확장 (일반적인 한글자 음식명들)
+      const allowedSingleChars = [
+        '쌀',
+        '콩',
+        '김',
+        '떡',
+        '죽',
+        '차',
+        '술',
+        '햄',
+        '빵',
+        '꿀',
+        '잼',
+        '젤',
+        '국',
+        '탕',
+        '면',
+        '밥',
+        '죽',
+        '물',
+        '차',
+        '술',
+        '주',
+        '과',
+        '등',
+        '참',
+        '깨',
+        '염',
+        '소',
+        '당',
+        '유',
+        '기',
+        '생',
+        '감',
+        '배',
+        '귤',
+        '밤',
+      ];
+
+      if (item.length === 1 && !allowedSingleChars.includes(item)) {
         console.log('❌ 한 글자 (허용 목록 제외):', item);
         return false;
       }
@@ -218,13 +253,12 @@ export function parseRouteData(responseText: string): any {
   }
 }
 
-
 export const deduplicateRouteByLocation = (route: any[]) => {
   return Array.from(
     new Map(
       route
-        .filter(item => item && item.location) // ✅ location 없는 거 걸러냄
-        .map(item => [item.location, item])
-    ).values()
+        .filter((item) => item && item.location) // ✅ location 없는 거 걸러냄
+        .map((item) => [item.location, item]),
+    ).values(),
   );
 };

@@ -1,4 +1,4 @@
-// pages/api/chat.ts - 개선된 버전
+// pages/api/chat.ts - routeData 전송 문제 해결 버전
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Anthropic } from '@anthropic-ai/sdk';
 import { extractShoppingItems } from '@/lib/utils';
@@ -106,13 +106,32 @@ export default async function handler(
 
         if (ragResult) {
           console.log('✅ RAG 처리 성공!');
+          
+          // 🔧 routeData 직렬화 확인
+          let serializedRouteData = ragResult.routeData;
+          if (ragResult.routeData) {
+            console.log('🔧 RAG에서 받은 routeData:', ragResult.routeData);
+            console.log('🔧 routeData 타입:', typeof ragResult.routeData);
+            console.log('🔧 routeData 키들:', Object.keys(ragResult.routeData));
+            
+            // JSON 직렬화 테스트
+            try {
+              const jsonString = JSON.stringify(ragResult.routeData);
+              serializedRouteData = JSON.parse(jsonString);
+              console.log('✅ routeData JSON 직렬화 성공');
+            } catch (serError) {
+              console.error('❌ routeData JSON 직렬화 실패:', serError);
+              serializedRouteData = ragResult.routeData;
+            }
+          }
+
           console.log(`⏱️ 총 처리 시간: ${Date.now() - startTime}ms`);
 
           return res.status(200).json({
             code: 200,
             data: {
               message: ragResult.answer,
-              routeData: ragResult.routeData || undefined,
+              routeData: serializedRouteData || undefined,
               sources: ragResult.sources || undefined,
               debugInfo:
                 process.env.NODE_ENV === 'development' ? debugInfo : undefined,
@@ -134,14 +153,38 @@ export default async function handler(
     // ===============================================
     console.log('🔄 기본 모드로 처리...');
 
-    // 경로 데이터 계산
-    let routeData = undefined;
+    // 🔧 경로 데이터 계산 (await 추가)
+    let routeData: RouteData | null = null;
     if (shoppingItems.length > 0) {
       console.log('🗺️ 경로 데이터 생성 중...');
       const routeStartTime = Date.now();
-      routeData = createRouteData(shoppingItems);
-      debugInfo.routeCalculationTime = Date.now() - routeStartTime;
-      console.log('✅ 경로 데이터 생성 완료:', routeData ? '성공' : '실패');
+      
+      try {
+        routeData = await createRouteData(shoppingItems); // 🔧 await 추가
+        debugInfo.routeCalculationTime = Date.now() - routeStartTime;
+        
+        if (routeData) {
+          console.log('✅ 기본 모드 경로 데이터 생성 완료:', {
+            items: routeData.items?.length || 0,
+            route: routeData.route?.length || 0,
+            distance: routeData.total_distance || 0,
+          });
+          
+          // JSON 직렬화 테스트
+          try {
+            const jsonString = JSON.stringify(routeData);
+            routeData = JSON.parse(jsonString);
+            console.log('✅ 기본 모드 routeData JSON 직렬화 성공');
+          } catch (serError) {
+            console.error('❌ 기본 모드 routeData JSON 직렬화 실패:', serError);
+          }
+        } else {
+          console.log('❌ 기본 모드 경로 데이터 생성 실패');
+        }
+      } catch (routeError) {
+        console.error('❌ 기본 모드 경로 생성 중 오류:', routeError);
+        debugInfo.routeError = routeError instanceof Error ? routeError.message : String(routeError);
+      }
     }
 
     // 이전 대화 내역 가져오기
@@ -170,7 +213,7 @@ export default async function handler(
         code: 200,
         data: {
           message: botResponse,
-          routeData: routeData ?? undefined,
+          routeData: routeData || undefined, // 🔧 routeData 포함
           debugInfo:
             process.env.NODE_ENV === 'development' ? debugInfo : undefined,
         },
@@ -267,11 +310,21 @@ ${routeData.route
 
     debugInfo.totalProcessingTime = totalTime;
 
+    // 🔧 최종 응답 전에 routeData 확인
+    if (routeData) {
+      console.log('🔧 최종 응답 전 routeData 확인:', {
+        type: typeof routeData,
+        keys: Object.keys(routeData),
+        itemsLength: routeData.items?.length,
+        routeLength: routeData.route?.length,
+      });
+    }
+
     return res.status(200).json({
       code: 200,
       data: {
         message: assistantResponse,
-        routeData: routeData ?? undefined,
+        routeData: routeData || undefined, // 🔧 routeData 명시적 포함
         debugInfo:
           process.env.NODE_ENV === 'development' ? debugInfo : undefined,
       },

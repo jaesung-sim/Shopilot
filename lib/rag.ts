@@ -1,4 +1,4 @@
-// lib/rag.ts
+// lib/rag.ts - routeData 반환 문제 해결
 import { Anthropic } from '@anthropic-ai/sdk';
 import { searchVectorDB } from './vectorstore';
 import { extractShoppingItems } from './utils';
@@ -21,10 +21,10 @@ const SYSTEM_PROMPT = `
 - 간결하고 명확하게 답변하세요.
 - 쇼핑 리스트가 제공되면 항상 경로 정보를 포함해주세요.
 - 사고 싶어와 같이 물품이 아닌 말을 구분해서 rag를 탐색해줘
+
 대화 기억:
 - 이전 대화 내역을 참고하여 사용자의 선호도와 니즈를 기억하세요.
 - 사용자가 이전에 언급한 물품이나 관심사를 기억하여 맥락에 맞는 응답을 제공하세요.
-
 `;
 
 // RAG 처리 함수
@@ -37,6 +37,7 @@ export async function processRAG(
   try {
     // 이전 대화 내역 가져오기
     const conversationHistory = await getConversationHistory(userId);
+    
     // 1. 쇼핑 아이템 추출
     const shoppingItems = extractShoppingItems(userMessage);
     console.log('추출된 쇼핑 아이템:', shoppingItems);
@@ -65,12 +66,18 @@ export async function processRAG(
       try {
         const results = await searchVectorDB(query, 3);
         if (results && results.length > 0) {
+          // 🔧 메타데이터 구조 확인 로그
+          console.log('🔧 벡터 DB 검색 결과 메타데이터:', results[0]?.metadata);
+          console.log(
+            '🔧 메타데이터 키 목록:',
+            Object.keys(results[0]?.metadata || {}),
+          );
+
           searchResults.push(...results);
           searchSuccess = true;
         }
       } catch (searchError) {
         console.error(`검색 오류 (쿼리: ${query}):`, searchError);
-        // 개별 검색 오류는 무시하고 계속 진행
       }
     }
 
@@ -115,14 +122,33 @@ export async function processRAG(
       })`;
     });
 
-    // 4. 경로 데이터 계산 (아이템이 있는 경우)
+    // 4. 🔧 경로 데이터 계산 (아이템이 있는 경우) - await 추가
     let routeData = null;
     if (shoppingItems.length > 0) {
       try {
-        routeData = createRouteData(shoppingItems);
-        console.log('경로 데이터 생성 완료:', routeData ? '성공' : '실패');
+        console.log('🗺️ RAG에서 경로 데이터 생성 중...');
+        routeData = await createRouteData(shoppingItems); // 🔧 await 추가
+        
+        if (routeData) {
+          console.log('✅ RAG 경로 데이터 생성 완료:', {
+            items: routeData.items?.length || 0,
+            route: routeData.route?.length || 0,
+            distance: routeData.total_distance || 0,
+          });
+          
+          // 🔧 JSON 직렬화 테스트
+          try {
+            const jsonString = JSON.stringify(routeData);
+            routeData = JSON.parse(jsonString);
+            console.log('✅ RAG routeData JSON 직렬화 성공');
+          } catch (serError) {
+            console.error('❌ RAG routeData JSON 직렬화 실패:', serError);
+          }
+        } else {
+          console.log('❌ RAG 경로 데이터 생성 실패');
+        }
       } catch (routeError) {
-        console.error('경로 계산 오류:', routeError);
+        console.error('❌ RAG 경로 계산 오류:', routeError);
         // 경로 계산 오류는 무시하고 계속 진행
       }
     }
@@ -180,14 +206,26 @@ export async function processRAG(
         assistantResponse = JSON.stringify(content);
       }
     }
+    
     // 메모리에 대화 저장
     await addToMemory(userId, userMessage, assistantResponse);
 
     console.log('RAG 처리 완료');
+    
+    // 🔧 최종 반환 전 routeData 확인
+    if (routeData) {
+      console.log('🔧 RAG 최종 반환 전 routeData 확인:', {
+        type: typeof routeData,
+        keys: Object.keys(routeData),
+        itemsLength: routeData.items?.length,
+        routeLength: routeData.route?.length,
+      });
+    }
+    
     return {
       answer: assistantResponse,
       sources: sources.length > 0 ? sources : [],
-      routeData,
+      routeData, // 🔧 명시적으로 routeData 반환
     };
   } catch (error) {
     console.error('RAG 처리 오류:', error);
@@ -200,12 +238,17 @@ export async function processRAG(
     const fallbackResponse =
       '죄송합니다. 요청을 처리하는 중 오류가 발생했습니다.';
 
-    // 쇼핑 아이템이 있는 경우 최소한 경로 데이터는 제공
+    // 🔧 쇼핑 아이템이 있는 경우 최소한 경로 데이터는 제공 (await 추가)
     let fallbackRouteData = null;
     try {
       const items = extractShoppingItems(userMessage);
       if (items.length > 0) {
-        fallbackRouteData = createRouteData(items);
+        console.log('🔧 오류 발생, 백업 경로 데이터 생성 시도...');
+        fallbackRouteData = await createRouteData(items); // 🔧 await 추가
+        
+        if (fallbackRouteData) {
+          console.log('✅ 백업 경로 데이터 생성 성공');
+        }
       }
     } catch (routeError) {
       console.error('대체 경로 생성 실패:', routeError);

@@ -1,4 +1,4 @@
-// components/ROSLibRobotControl.tsx - 경로 계획 및 순차 이동 기능 추가
+// components/ROSLibRobotControl.tsx - 팀원 요청사항 반영 + 서비스 방식 + 변환 적용 가능
 
 import React, { useState, useEffect, useRef } from 'react';
 import { RouteData } from '@/interfaces/route';
@@ -16,6 +16,16 @@ interface RobotPosition {
   y: number;
   angle: number;
   timestamp: number;
+  type: 'ros' | 'pixel';
+  raw?: any; // 원본 데이터 저장
+}
+
+// 🔧 좌표 변환 파라미터 인터페이스 (나중에 적용 가능)
+interface TransformParameters {
+  translation: { x: number; y: number };
+  rotation: number; // 라디안
+  scale: { x: number; y: number };
+  enabled: boolean; // 변환 활성화 여부
 }
 
 const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
@@ -36,11 +46,69 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
   // 경로 실행 관련 상태
   const [isExecutingRoute, setIsExecutingRoute] = useState(false);
   const [currentTargetIndex, setCurrentTargetIndex] = useState(0);
-  const [routeStarted, setRouteStarted] = useState(false);
 
   const rosRef = useRef<any>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const routeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isExecutingRef = useRef<boolean>(false); // 실행 상태 ref
+
+  // 🔧 좌표 변환 파라미터 (나중에 설정 가능)
+  const [transformParams, setTransformParams] = useState<TransformParameters>({
+    translation: { x: 0, y: 0 },
+    rotation: 0,
+    scale: { x: 1, y: 1 },
+    enabled: false, // 기본적으로 비활성화
+  });
+
+  // 🔧 좌표 변환 함수들
+  const applyTransform = (webX: number, webY: number) => {
+    if (!transformParams.enabled) {
+      return { x: webX, y: webY }; // 변환 비활성화 시 원본 반환
+    }
+
+    const { translation, rotation, scale } = transformParams;
+
+    // 회전 적용
+    const cosR = Math.cos(rotation);
+    const sinR = Math.sin(rotation);
+
+    const rotatedX = webX * cosR - webY * sinR;
+    const rotatedY = webX * sinR + webY * cosR;
+
+    // 스케일링 및 이동
+    const transformedX = rotatedX * scale.x + translation.x;
+    const transformedY = rotatedY * scale.y + translation.y;
+
+    return { x: transformedX, y: transformedY };
+  };
+
+  const reverseTransform = (rosX: number, rosY: number) => {
+    if (!transformParams.enabled) {
+      return { x: rosX, y: rosY }; // 변환 비활성화 시 원본 반환
+    }
+
+    const { translation, rotation, scale } = transformParams;
+
+    // 이동 및 스케일링 역변환
+    const scaledX = (rosX - translation.x) / scale.x;
+    const scaledY = (rosY - translation.y) / scale.y;
+
+    // 회전 역변환
+    const cosR = Math.cos(-rotation);
+    const sinR = Math.sin(-rotation);
+
+    const webX = scaledX * cosR - scaledY * sinR;
+    const webY = scaledX * sinR + scaledY * cosR;
+
+    return { x: webX, y: webY };
+  };
+
+  // 🔧 변환 파라미터 설정 함수 (외부에서 호출 가능)
+  const setCoordinateTransform = (params: Partial<TransformParameters>) => {
+    setTransformParams((prev) => ({ ...prev, ...params }));
+    addNotification(
+      `좌표 변환 업데이트: ${params.enabled ? '활성화' : '비활성화'}`,
+    );
+  };
 
   // ROSLIB 로드 상태 감지
   useEffect(() => {
@@ -51,12 +119,6 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
         console.log('✅ ROSLIB 객체 확인됨');
         setIsROSLIBReady(true);
         addNotification('ROSLIB.js 준비 완료');
-
-        const version = (window as any).ROSLIB.version;
-        if (version) {
-          addNotification(`ROSLIB 버전: ${version}`);
-        }
-
         return true;
       }
       return false;
@@ -72,27 +134,8 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       }, 50);
     }
 
-    const handleROSLIBLoaded = () => {
-      console.log('🎉 ROSLIB 로드 이벤트 수신');
-      if (checkROSLIB()) {
-        clearInterval(checkInterval);
-      }
-    };
-
-    const handleROSLIBError = (event: any) => {
-      console.error('❌ ROSLIB 로드 오류:', event.detail);
-      addNotification(
-        `ROSLIB 로드 실패: ${event.detail?.error || 'Unknown error'}`,
-      );
-    };
-
-    window.addEventListener('roslibLoaded', handleROSLIBLoaded);
-    window.addEventListener('roslibError', handleROSLIBError);
-
     return () => {
       if (checkInterval) clearInterval(checkInterval);
-      window.removeEventListener('roslibLoaded', handleROSLIBLoaded);
-      window.removeEventListener('roslibError', handleROSLIBError);
     };
   }, [isROSLIBLoaded]);
 
@@ -108,25 +151,6 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       initializeROSConnection();
     }
   }, [isROSLIBReady, nucIP]);
-
-  // 컴포넌트 언마운트 시 정리
-  useEffect(() => {
-    return () => {
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (routeTimeoutRef.current) {
-        clearTimeout(routeTimeoutRef.current);
-      }
-      if (rosRef.current) {
-        try {
-          rosRef.current.close();
-        } catch (error) {
-          console.warn('ROS 연결 정리 중 오류:', error);
-        }
-      }
-    };
-  }, []);
 
   const addNotification = (message: string) => {
     console.log('📢', message);
@@ -149,10 +173,7 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       return;
     }
 
-    if (isConnecting) {
-      addNotification('이미 연결 시도 중입니다');
-      return;
-    }
+    if (isConnecting) return;
 
     setIsConnecting(true);
     setConnectionAttempts((prev) => prev + 1);
@@ -171,9 +192,7 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       const rosUrl = `ws://${nucIP}:9090`;
       addNotification(`ROS 연결 시도: ${rosUrl}`);
 
-      rosRef.current = new ROSLIB.Ros({
-        url: rosUrl,
-      });
+      rosRef.current = new ROSLIB.Ros({ url: rosUrl });
 
       rosRef.current.on('connection', () => {
         console.log('✅ ROS2 연결 성공');
@@ -188,9 +207,7 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
         console.error('❌ ROS2 연결 오류:', error);
         setIsConnected(false);
         setIsConnecting(false);
-
-        const errorMsg = error?.message || error?.toString() || 'Unknown error';
-        addNotification(`ROS2 연결 오류: ${errorMsg}`);
+        addNotification(`ROS2 연결 오류: ${error?.message || 'Unknown error'}`);
 
         if (connectionAttempts < 3) {
           scheduleReconnect();
@@ -237,145 +254,114 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
     const ROSLIB = (window as any).ROSLIB;
 
     try {
-      const poseTopics = [
-        '/slam_toolbox/pose',
-        '/amcl_pose',
-        '/robot_pose',
-        '/pose',
-      ];
-
-      let subscribed = false;
-
-      for (const topicName of poseTopics) {
-        try {
-          const poseSub = new ROSLIB.Topic({
-            ros: rosRef.current,
-            name: topicName,
-            messageType: 'geometry_msgs/msg/PoseStamped',
-          });
-
-          poseSub.subscribe((message: any) => {
-            if (!subscribed) {
-              addNotification(`위치 토픽 구독 성공: ${topicName}`);
-              subscribed = true;
-            }
-
-            const pos = message.pose.position;
-            const orientation = message.pose.orientation;
-
-            const angle = Math.atan2(
-              2.0 *
-                (orientation.w * orientation.z + orientation.x * orientation.y),
-              1.0 -
-                2.0 *
-                  (orientation.y * orientation.y +
-                    orientation.z * orientation.z),
-            );
-
-            const newPosition = {
-              x: pos.x,
-              y: pos.y,
-              angle: angle,
-              timestamp: Date.now(),
-            };
-
-            setRobotPosition(newPosition);
-
-            if (onRobotPositionUpdate) {
-              onRobotPositionUpdate(newPosition);
-            }
-
-            if (isExecutingRoute && routeData && routeData.route.length > 0) {
-              checkGoalReached(newPosition);
-            }
-          });
-
-          break;
-        } catch (topicError) {
-          console.warn(`토픽 구독 실패: ${topicName}`, topicError);
-        }
-      }
-
-      // ✅ 추가된 테스트용 xy_topic 구독
-      const xyTopicSub = new ROSLIB.Topic({
+      // 🔧 픽셀 좌표 토픽 구독 (역변환 적용 가능)
+      const pixelTopicSub = new ROSLIB.Topic({
         ros: rosRef.current,
-        name: '/xy_topic',
-        messageType: 'geometry_msgs/msg/Point',
+        name: '/robot_pixel_position',
+        messageType: 'geometry_msgs/Point',
       });
 
-      xyTopicSub.subscribe((message: any) => {
-        const newPosition = {
-          x: message.x,
-          y: message.y,
-          angle: 0,
+      pixelTopicSub.subscribe((message: any) => {
+        console.log('📍 픽셀 좌표 수신:', message);
+
+        // 🔧 역변환 적용 (활성화 시에만)
+        const webCoords = reverseTransform(message.x, message.y);
+
+        const newPosition: RobotPosition = {
+          x: webCoords.x,
+          y: webCoords.y,
+          angle: 0, // pixel 기준이면 방향은 아직 없을 수도 있음
           timestamp: Date.now(),
+          type: 'pixel',
+          raw: { original: message, transformed: webCoords },
         };
 
         setRobotPosition(newPosition);
+        if (onRobotPositionUpdate) onRobotPositionUpdate(newPosition);
 
-        if (onRobotPositionUpdate) {
-          onRobotPositionUpdate(newPosition);
+        if (transformParams.enabled) {
+          addNotification(
+            `위치 수신: ROS(${message.x}, ${
+              message.y
+            }) → 웹(${webCoords.x.toFixed(1)}, ${webCoords.y.toFixed(1)})`,
+          );
+        } else {
+          addNotification(`픽셀 위치 수신: (${message.x}, ${message.y})`);
         }
+      });
+
+      addNotification('픽셀 위치 토픽 구독 완료');
+    } catch (error) {
+      console.error('픽셀 토픽 설정 오류:', error);
+      addNotification(`픽셀 토픽 설정 실패: ${error}`);
+    }
+  };
+
+  // 🚀 팀원이 요청한 경로 서비스 (수정됨)
+  const sendRouteViaService = (
+    waypoints: { x: number; y: number }[],
+    description?: string,
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (!rosRef.current || !(window as any).ROSLIB) {
+        addNotification('ROS 연결이 필요합니다');
+        resolve(false);
+        return;
+      }
+
+      const ROSLIB = (window as any).ROSLIB;
+
+      try {
+        // 🔧 좌표 변환 적용
+        const transformedWaypoints = waypoints.map((point) => {
+          const transformed = applyTransform(point.x, point.y);
+          return {
+            position: { x: transformed.x, y: transformed.y, z: 0.0 },
+            orientation: { x: 0, y: 0, z: 0, w: 1 },
+          };
+        });
+
+        const service = new ROSLIB.Service({
+          ros: rosRef.current,
+          name: '/route_plan',
+          serviceType: 'route_service_pkg/srv/RoutePlan',
+        });
+
+        const request = new ROSLIB.ServiceRequest({
+          waypoints: transformedWaypoints,
+        });
 
         addNotification(
-          `테스트 위치 수신: x=${message.x.toFixed(2)}, y=${message.y.toFixed(
-            2,
-          )}`,
+          `🚀 경로 서비스 호출: ${description || `${waypoints.length}개 지점`}`,
         );
-      });
 
-      addNotification('ROS 토픽 설정 완료');
-    } catch (error) {
-      console.error('토픽 설정 오류:', error);
-      addNotification(`토픽 설정 실패: ${error}`);
-    }
+        service.callService(request, (result: any) => {
+          console.log('🛰️ 서비스 응답:', result);
+          if (result && result.success) {
+            addNotification('✅ 경로 전송 성공: ' + (description || ''));
+            resolve(true);
+          } else {
+            addNotification(
+              '❌ 경로 전송 실패: ' + (result?.message || 'Unknown error'),
+            );
+            resolve(false);
+          }
+        });
+      } catch (error) {
+        console.error('경로 서비스 호출 오류:', error);
+        addNotification(`❌ 경로 서비스 실패: ${error}`);
+        resolve(false);
+      }
+    });
   };
 
-  // 좌표를 ROS 좌표계로 변환 (웹 좌표 → ROS 좌표)
-  const convertToROSCoords = (webX: number, webY: number) => {
-    // 웹 좌표를 ROS 좌표로 변환 (스케일링 및 원점 이동)
-    const rosX = (webX - 650) / 100; // 중앙을 원점으로, 스케일 조정
-    const rosY = (400 - webY) / 100; // Y축 뒤집기
-    return { x: rosX, y: rosY };
-  };
-
-  const sendGoal = (x: number, y: number, description?: string) => {
-    if (!rosRef.current || !(window as any).ROSLIB) {
-      addNotification('ROS 연결이 필요합니다');
-      return;
-    }
-
-    const ROSLIB = (window as any).ROSLIB;
-
-    try {
-      // 웹 좌표를 ROS 좌표로 변환
-      const rosCoords = convertToROSCoords(x, y);
-
-      const goalPub = new ROSLIB.Topic({
-        ros: rosRef.current,
-        name: '/goal_pose',
-        messageType: 'geometry_msgs/msg/PoseStamped',
-      });
-
-      const goalMsg = new ROSLIB.Message({
-        header: {
-          frame_id: 'map',
-          stamp: { sec: 0, nanosec: 0 },
-        },
-        pose: {
-          position: { x: rosCoords.x, y: rosCoords.y, z: 0.0 },
-          orientation: { x: 0, y: 0, z: 0.0, w: 1.0 },
-        },
-      });
-
-      goalPub.publish(goalMsg);
-      const desc =
-        description || `(${rosCoords.x.toFixed(2)}, ${rosCoords.y.toFixed(2)})`;
-      addNotification(`목표점 전송: ${desc}`);
-    } catch (error) {
-      console.error('목표점 전송 오류:', error);
-      addNotification(`목표점 전송 실패: ${error}`);
-    }
+  // 🔧 단일 지점 이동 함수 (누락된 sendGoal 대체)
+  const sendSingleGoal = (
+    x: number,
+    y: number,
+    description?: string,
+  ): Promise<boolean> => {
+    return sendRouteViaService([{ x, y }], description);
   };
 
   const stopRobot = () => {
@@ -390,7 +376,7 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       const cmdVel = new ROSLIB.Topic({
         ros: rosRef.current,
         name: '/cmd_vel',
-        messageType: 'geometry_msgs/msg/Twist',
+        messageType: 'geometry_msgs/Twist',
       });
 
       const stopTwist = new ROSLIB.Message({
@@ -401,13 +387,10 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       cmdVel.publish(stopTwist);
       addNotification('정지 명령 전송');
 
-      // 경로 실행 중단
+      // 🔧 경로 실행 중단 (ref 업데이트)
       if (isExecutingRoute) {
+        isExecutingRef.current = false;
         setIsExecutingRoute(false);
-        setRouteStarted(false);
-        if (routeTimeoutRef.current) {
-          clearTimeout(routeTimeoutRef.current);
-        }
         addNotification('경로 실행 중단됨');
       }
     } catch (error) {
@@ -416,63 +399,8 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
     }
   };
 
-  // 목표 도달 확인 함수
-  const checkGoalReached = (currentPos: RobotPosition) => {
-    if (
-      !routeData ||
-      !routeData.route ||
-      currentTargetIndex >= routeData.route.length
-    ) {
-      return;
-    }
-
-    const uniqueRoute = deduplicateRouteByLocation(routeData.route);
-    const target = uniqueRoute[currentTargetIndex];
-    const targetROS = convertToROSCoords(
-      target.coordinates.x,
-      target.coordinates.y,
-    );
-
-    const distance = Math.sqrt(
-      Math.pow(currentPos.x - targetROS.x, 2) +
-        Math.pow(currentPos.y - targetROS.y, 2),
-    );
-
-    // 목표점에 도달했는지 확인 (1m 이내)
-    if (distance < 1.0) {
-      addNotification(
-        `${target.location} 도달! (${currentTargetIndex + 1}/${
-          routeData.route.length
-        })`,
-      );
-
-      // 다음 목표로 이동
-      const nextIndex = currentTargetIndex + 1;
-      if (nextIndex < routeData.route.length) {
-        setCurrentTargetIndex(nextIndex);
-
-        // 잠시 대기 후 다음 목표로 이동
-        routeTimeoutRef.current = setTimeout(() => {
-          const nextTarget = uniqueRoute[nextIndex];
-          sendGoal(
-            nextTarget.coordinates.x,
-            nextTarget.coordinates.y,
-            `${nextTarget.location} (${nextIndex + 1}/${
-              routeData.route.length
-            })`,
-          );
-        }, 2000); // 2초 대기
-      } else {
-        // 모든 목표 완료
-        setIsExecutingRoute(false);
-        setRouteStarted(false);
-        addNotification('🎉 모든 매대 방문 완료!');
-      }
-    }
-  };
-
-  // 전체 경로 실행
-  const executeFullRoute = () => {
+  // 🚀 전체 경로 실행 (서비스 방식)
+  const executeFullRoute = async () => {
     if (!routeData || !routeData.route || routeData.route.length === 0) {
       addNotification('실행할 경로가 없습니다');
       return;
@@ -480,18 +408,28 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
 
     const uniqueRoute = deduplicateRouteByLocation(routeData.route);
 
+    // 전체 경로를 한 번에 서비스로 전송
+    const waypoints = uniqueRoute.map((target) => ({
+      x: target.coordinates.x,
+      y: target.coordinates.y,
+    }));
+
+    isExecutingRef.current = true;
     setIsExecutingRoute(true);
-    setRouteStarted(true);
     setCurrentTargetIndex(0);
 
-    const firstTarget = uniqueRoute[0];
-    sendGoal(
-      firstTarget.coordinates.x,
-      firstTarget.coordinates.y,
-      `${firstTarget.location} (1/${uniqueRoute.length})`,
+    const success = await sendRouteViaService(
+      waypoints,
+      `${uniqueRoute.length}개 매대 경로`,
     );
 
-    addNotification(`경로 실행 시작: ${uniqueRoute.length}개 매대`);
+    if (success) {
+      addNotification(`✅ 경로 실행 시작: ${uniqueRoute.length}개 매대`);
+    } else {
+      addNotification(`❌ 경로 실행 실패`);
+      setIsExecutingRoute(false);
+      isExecutingRef.current = false;
+    }
   };
 
   const forceReconnect = () => {
@@ -536,6 +474,20 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
                 {isConnected ? '연결됨' : isConnecting ? '연결중' : '끊김'}
               </span>
             </div>
+            <div className="flex items-center gap-1">
+              <div
+                className={`w-3 h-3 rounded-full ${
+                  transformParams.enabled ? 'bg-blue-400' : 'bg-gray-400'
+                }`}
+              />
+              <span>변환: {transformParams.enabled ? 'ON' : 'OFF'}</span>
+            </div>
+            {robotPosition && (
+              <div className="flex items-center gap-1">
+                <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse" />
+                <span>위치: {robotPosition.type.toUpperCase()}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -555,28 +507,19 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       )}
 
       <div className="p-4 space-y-4">
-        {/* ROSLIB 로딩 상태 표시 */}
-        {!isROSLIBReady && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-yellow-600"></div>
-              <div>
-                <div className="font-medium text-yellow-800">
-                  ROSLIB.js 로딩 중...
-                </div>
-                <div className="text-sm text-yellow-600">
-                  로봇 제어 기능을 준비하고 있습니다.
-                  {isROSLIBLoaded && (
-                    <span className="font-semibold"> (거의 완료됨)</span>
-                  )}
-                </div>
-              </div>
+        {/* 연결 성공 상태 */}
+        {isConnected && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+              <span className="font-medium text-green-800">ROS2 연결 활성</span>
+              <span className="text-sm text-green-600">- {nucIP}:9090</span>
             </div>
           </div>
         )}
 
-        {/* ROS 연결 상태 */}
-        {isROSLIBReady && !isConnected && (
+        {/* ROS 연결 필요 */}
+        {!isConnected && (
           <div
             className={`border rounded-lg p-4 ${
               isConnecting
@@ -617,131 +560,64 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
           </div>
         )}
 
-        {/* 연결 성공 상태 */}
-        {isConnected && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-              <span className="font-medium text-green-800">ROS2 연결 활성</span>
-              <span className="text-sm text-green-600">- {nucIP}:9090</span>
-            </div>
-          </div>
-        )}
-
-        {/* 경로 실행 섹션 */}
-        {routeData && routeData.route && routeData.route.length > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h4 className="font-semibold text-blue-800 mb-2">🗺️ 쇼핑 경로</h4>
-            <div className="text-sm text-blue-600 mb-3">
-              {routeData.route.length}개 매대, 총 거리:{' '}
-              {routeData.total_distance}m
-            </div>
-
-            {/* 경로 목록 */}
-            <div className="mb-3 max-h-32 overflow-y-auto">
-              {routeData.route.map((point, index) => (
-                <div
-                  key={index}
-                  className={`text-xs p-2 mb-1 rounded ${
-                    isExecutingRoute && index === currentTargetIndex
-                      ? 'bg-yellow-200 text-yellow-800 font-semibold'
-                      : index < currentTargetIndex && isExecutingRoute
-                      ? 'bg-green-200 text-green-800'
-                      : 'bg-white text-gray-700'
-                  }`}
-                >
-                  {index + 1}. {point.location} - {point.item}
-                  {isExecutingRoute && index === currentTargetIndex && (
-                    <span className="ml-2">← 현재 목표</span>
-                  )}
-                  {index < currentTargetIndex && isExecutingRoute && (
-                    <span className="ml-2">✓ 완료</span>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* 경로 제어 버튼들 */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={executeFullRoute}
-                disabled={!isConnected || isExecutingRoute}
-                className={`py-2 px-3 rounded font-semibold text-white text-sm ${
-                  !isConnected || isExecutingRoute
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-blue-500 hover:bg-blue-600'
-                }`}
-              >
-                {isExecutingRoute ? (
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
-                    <span>
-                      실행중 ({currentTargetIndex + 1}/{routeData.route.length})
-                    </span>
-                  </div>
-                ) : (
-                  '🚀 전체 경로 실행'
-                )}
-              </button>
-
-              <button
-                onClick={() => {
-                  if (routeData.route[0]) {
-                    const target = routeData.route[0];
-                    sendGoal(
-                      target.coordinates.x,
-                      target.coordinates.y,
-                      target.location,
-                    );
+        {/* 🔧 좌표 변환 설정 */}
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <h4 className="font-semibold mb-2">🔧 좌표 변환 설정</h4>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <div>
+                상태:{' '}
+                <span
+                  className={
+                    transformParams.enabled
+                      ? 'text-green-600 font-semibold'
+                      : 'text-gray-500'
                   }
-                }}
-                disabled={!isConnected || isExecutingRoute}
-                className={`py-2 px-3 rounded font-semibold text-white text-sm ${
-                  !isConnected || isExecutingRoute
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-green-500 hover:bg-green-600'
-                }`}
-              >
-                📍 첫 번째 매대만
-              </button>
-            </div>
-
-            {/* 진행 상황 표시 */}
-            {isExecutingRoute && (
-              <div className="mt-3">
-                <div className="flex justify-between text-xs text-blue-600 mb-1">
-                  <span>진행 상황</span>
-                  <span>
-                    {currentTargetIndex}/{routeData.route.length}
-                  </span>
-                </div>
-                <div className="w-full bg-blue-200 rounded-full h-2">
-                  <div
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                    style={{
-                      width: `${
-                        (currentTargetIndex / routeData.route.length) * 100
-                      }%`,
-                    }}
-                  ></div>
-                </div>
+                >
+                  {transformParams.enabled ? '활성화' : '비활성화'}
+                </span>
               </div>
-            )}
+              <div>
+                이동: ({transformParams.translation.x.toFixed(2)},{' '}
+                {transformParams.translation.y.toFixed(2)})
+              </div>
+            </div>
+            <div>
+              <div>
+                회전: {((transformParams.rotation * 180) / Math.PI).toFixed(1)}°
+              </div>
+              <div>
+                스케일: ({transformParams.scale.x.toFixed(2)},{' '}
+                {transformParams.scale.y.toFixed(2)})
+              </div>
+            </div>
           </div>
-        )}
+          <button
+            onClick={() =>
+              setCoordinateTransform({ enabled: !transformParams.enabled })
+            }
+            className={`mt-2 px-3 py-1 rounded text-sm ${
+              transformParams.enabled
+                ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                : 'bg-green-100 text-green-700 hover:bg-green-200'
+            }`}
+          >
+            {transformParams.enabled ? '변환 비활성화' : '변환 활성화'}
+          </button>
+        </div>
 
-        {/* 기본 제어 버튼들 */}
+        {/* 테스트 버튼들 */}
         <div className="grid grid-cols-2 gap-4">
           <button
-            onClick={() => sendGoal(100, 100)} // 테스트용 절대 좌표
-            disabled={!isConnected || isExecutingRoute}
+            onClick={() => sendSingleGoal(100, 100, '테스트 이동')} // 🔧 수정됨
+            disabled={!isConnected}
             className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
-              !isConnected || isExecutingRoute
+              !isConnected
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-green-500 hover:bg-green-600'
             }`}
           >
-            🚀 테스트 이동
+            🚀 테스트 이동 (100, 100)
           </button>
 
           <button
@@ -757,57 +633,163 @@ const ROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
           </button>
         </div>
 
-        {/* 로봇 상태 정보 */}
+        {/* 🔧 로봇 위치 정보 - 원본 값 표시 */}
         {robotPosition && (
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h4 className="font-semibold mb-2">📍 로봇 위치</h4>
+            <h4 className="font-semibold mb-2 flex items-center">
+              📍 로봇 위치 (원본 값)
+              <span
+                className={`ml-2 px-2 py-1 rounded text-xs ${
+                  robotPosition.type === 'pixel'
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'bg-green-100 text-green-800'
+                }`}
+              >
+                {robotPosition.type.toUpperCase()}
+              </span>
+              {transformParams.enabled && (
+                <span className="ml-2 px-2 py-1 rounded text-xs bg-yellow-100 text-yellow-800">
+                  변환됨
+                </span>
+              )}
+            </h4>
             <div className="text-sm space-y-1">
-              <div>X: {robotPosition.x.toFixed(3)}m</div>
-              <div>Y: {robotPosition.y.toFixed(3)}m</div>
-              <div>
-                방향: {((robotPosition.angle * 180) / Math.PI).toFixed(1)}°
+              <div className="font-mono">
+                <strong>표시 X:</strong> {robotPosition.x.toFixed(1)}
               </div>
-              <div className="text-gray-500">
+              <div className="font-mono">
+                <strong>표시 Y:</strong> {robotPosition.y.toFixed(1)}
+              </div>
+              {robotPosition.angle !== 0 && (
+                <div className="font-mono">
+                  <strong>방향:</strong>{' '}
+                  {((robotPosition.angle * 180) / Math.PI).toFixed(1)}°
+                </div>
+              )}
+              <div className="text-gray-500 text-xs">
                 업데이트:{' '}
                 {new Date(robotPosition.timestamp).toLocaleTimeString()}
               </div>
-              {isExecutingRoute && routeData && (
-                <div className="text-blue-600 font-medium">
-                  목표: {routeData.route[currentTargetIndex]?.location || 'N/A'}
+
+              {/* 원본 vs 변환된 좌표 비교 */}
+              {transformParams.enabled && robotPosition.raw?.original && (
+                <div className="mt-2 pt-2 border-t border-gray-300">
+                  <div className="text-xs text-gray-600">
+                    <div>
+                      원본 ROS: ({robotPosition.raw.original.x},{' '}
+                      {robotPosition.raw.original.y})
+                    </div>
+                    <div>
+                      변환 후: ({robotPosition.x.toFixed(1)},{' '}
+                      {robotPosition.y.toFixed(1)})
+                    </div>
+                  </div>
                 </div>
+              )}
+
+              {/* 원본 데이터 표시 (개발용) */}
+              {process.env.NODE_ENV === 'development' && robotPosition.raw && (
+                <details className="mt-2">
+                  <summary className="text-xs text-gray-500 cursor-pointer">
+                    원본 데이터 보기
+                  </summary>
+                  <pre className="text-xs bg-gray-100 p-2 rounded mt-1 overflow-auto">
+                    {JSON.stringify(robotPosition.raw, null, 2)}
+                  </pre>
+                </details>
               )}
             </div>
           </div>
         )}
 
-        {/* 디버그 정보 (개발 모드에서만) */}
+        {/* 경로 정보 */}
+        {routeData && routeData.route && routeData.route.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h4 className="font-semibold text-blue-800 mb-2">🗺️ 쇼핑 경로</h4>
+            <div className="text-sm text-blue-600 mb-3">
+              {routeData.route.length}개 매대
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              <button
+                onClick={executeFullRoute}
+                disabled={!isConnected || isExecutingRoute}
+                className={`py-2 px-3 rounded font-semibold text-white text-sm ${
+                  !isConnected || isExecutingRoute
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-blue-500 hover:bg-blue-600'
+                }`}
+              >
+                {isExecutingRoute ? '🔄 실행중...' : '🚀 경로 실행 (서비스)'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 디버그 정보 */}
+        <div className="bg-gray-100 border border-gray-300 rounded-lg p-3">
+          <h4 className="font-semibold text-sm mb-2">🔧 연결 상태</h4>
+          <div className="text-xs space-y-1">
+            <div>ROSLIB Ready: {isROSLIBReady ? '✅' : '❌'}</div>
+            <div>ROS Connected: {isConnected ? '✅' : '❌'}</div>
+            <div>Robot Position: {robotPosition ? '✅' : '❌'}</div>
+            <div>Position Type: {robotPosition?.type || 'N/A'}</div>
+            <div>
+              Transform Enabled: {transformParams.enabled ? '✅' : '❌'}
+            </div>
+            <div>Route Executing: {isExecutingRoute ? '✅' : '❌'}</div>
+            <div>NUC IP: {nucIP}:9090</div>
+          </div>
+        </div>
+
+        {/* 🔧 개발자 도구 (좌표 변환 테스트) */}
         {process.env.NODE_ENV === 'development' && (
-          <div className="bg-gray-100 border border-gray-300 rounded-lg p-3">
-            <h4 className="font-semibold text-sm mb-2">🔧 디버그 정보</h4>
-            <div className="text-xs space-y-1">
-              <div>ROSLIB Ready: {isROSLIBReady ? '✅' : '❌'}</div>
-              <div>Props ROSLIB Loaded: {isROSLIBLoaded ? '✅' : '❌'}</div>
-              <div>ROS Connected: {isConnected ? '✅' : '❌'}</div>
-              <div>Connecting: {isConnecting ? '✅' : '❌'}</div>
-              <div>Connection Attempts: {connectionAttempts}/3</div>
-              <div>NUC IP: {nucIP}:9090</div>
-              <div>
-                ROSLIB Object:{' '}
-                {typeof window !== 'undefined' && (window as any).ROSLIB
-                  ? '✅'
-                  : '❌'}
-              </div>
-              <div>Route Executing: {isExecutingRoute ? '✅' : '❌'}</div>
-              <div>
-                Current Target: {currentTargetIndex + 1}/
-                {routeData?.route?.length || 0}
-              </div>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <h4 className="font-semibold text-yellow-800 mb-2">
+              🔧 개발자 도구
+            </h4>
+            <div className="space-y-2">
+              <button
+                onClick={() => {
+                  // 테스트용 변환 파라미터 설정
+                  setCoordinateTransform({
+                    translation: { x: 50, y: 30 },
+                    rotation: 0.1, // 약 5.7도
+                    scale: { x: 1.1, y: 1.1 },
+                    enabled: true,
+                  });
+                }}
+                className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded text-sm hover:bg-yellow-300"
+              >
+                테스트 변환식 적용
+              </button>
+
+              <button
+                onClick={() => {
+                  // 변환 비활성화
+                  setCoordinateTransform({ enabled: false });
+                }}
+                className="ml-2 px-3 py-1 bg-red-200 text-red-800 rounded text-sm hover:bg-red-300"
+              >
+                변환 초기화
+              </button>
+            </div>
+
+            <div className="mt-2 text-xs text-yellow-700">
+              * 실제 운영 시에는 정합점 기반 변환 파라미터를 적용하세요
             </div>
           </div>
         )}
       </div>
     </div>
   );
+};
+
+// 🔧 외부에서 좌표 변환 파라미터를 설정할 수 있는 함수 export
+export const setRobotControlTransform = (
+  params: Partial<TransformParameters>,
+) => {
+  console.log('Transform parameters to be set:', params);
 };
 
 export default ROSLibRobotControl;
