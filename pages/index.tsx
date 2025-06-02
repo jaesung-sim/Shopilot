@@ -7,6 +7,39 @@ import ROSLibRobotControl from '@/components/ROSLibRobotControl';
 import { RouteData } from '@/interfaces/route';
 import { IMemberMessage, UserType } from '@/interfaces/message';
 
+interface ROSLIBStatus {
+  propsLoaded: boolean;
+  windowExists: boolean;
+  roslibExists: boolean;
+  version: string | null;
+}
+
+// 🔧 타입 안전한 ROSLIB 상태 체크
+const checkROSLIBStatus = (isROSLIBLoaded: boolean): ROSLIBStatus => {
+  const windowExists = typeof window !== 'undefined';
+  const roslibExists = windowExists && window.ROSLIB !== undefined;
+
+  return {
+    propsLoaded: isROSLIBLoaded, // ✅ 매개변수로 받아서 사용
+    windowExists,
+    roslibExists,
+    version: roslibExists && window.ROSLIB ? window.ROSLIB.version : null,
+  };
+};
+
+// 🔧 타입 안전한 ROSLIB 버전 체크
+const getROSLIBVersion = (): string => {
+  if (typeof window !== 'undefined' && window.ROSLIB) {
+    return window.ROSLIB.version || 'Unknown';
+  }
+  return 'Not Available';
+};
+
+// 🔧 타입 안전한 ROSLIB 존재 여부 체크
+const isROSLIBAvailable = (): boolean => {
+  return typeof window !== 'undefined' && window.ROSLIB !== undefined;
+};
+
 interface HomePageProps {
   isROSLIBLoaded?: boolean;
 }
@@ -88,19 +121,19 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
     console.log('🧹 채팅 초기화됨');
   };
 
-  const checkROSLIBStatus = () => {
-    return {
-      propsLoaded: isROSLIBLoaded,
-      windowExists: typeof window !== 'undefined',
-      roslibExists: typeof window !== 'undefined' && !!(window as any).ROSLIB,
-      version:
-        typeof window !== 'undefined' && (window as any).ROSLIB
-          ? (window as any).ROSLIB.version
-          : null,
-    };
-  };
-
   const roslibStatus = checkROSLIBStatus();
+
+  // 타입 안전한 로그
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔧 ROSLIB 상태:', {
+        loaded: roslibStatus.propsLoaded,
+        exists: roslibStatus.roslibExists,
+        version: roslibStatus.version,
+        window: roslibStatus.windowExists,
+      });
+    }
+  }, [roslibStatus]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -233,12 +266,17 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
                       새 쇼핑 경로가 준비되었습니다!
                     </span>
                   </div>
-                  <button
-                    onClick={() => handleTabChange('control')}
-                    className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600"
-                  >
-                    확인하기
-                  </button>
+                  <div className="flex gap-2">
+                    <span className="text-sm text-green-600">
+                      매대별 단계 이동 방식
+                    </span>
+                    <button
+                      onClick={() => handleTabChange('control')}
+                      className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600"
+                    >
+                      로봇 제어로 이동
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -270,7 +308,7 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
                   }`}
                   disabled={!roslibStatus.roslibExists}
                 >
-                  🤖 로봇 제어
+                  🤖 로봇 제어 (토픽)
                   {!roslibStatus.roslibExists && (
                     <span className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-500 rounded-full animate-pulse"></span>
                   )}
@@ -372,10 +410,14 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
               <div className="text-sm text-blue-700">
                 {routeData && routeData.route && routeData.items ? (
                   <>
+                    <div>• 방식: 매대별 단계 이동</div>
                     <div>• 매대: {routeData.route.length}개</div>
                     <div>• 아이템: {routeData.items.length}개</div>
                     <div>
                       • 거리: {Math.round(routeData.total_distance / 10)}m
+                    </div>
+                    <div className="text-xs text-blue-600 mt-1">
+                      ✨ 버튼 클릭으로 매대별 이동
                     </div>
                   </>
                 ) : routeData ? (

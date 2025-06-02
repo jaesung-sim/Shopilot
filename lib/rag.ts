@@ -37,7 +37,7 @@ export async function processRAG(
   try {
     // 이전 대화 내역 가져오기
     const conversationHistory = await getConversationHistory(userId);
-    
+
     // 1. 쇼핑 아이템 추출
     const shoppingItems = extractShoppingItems(userMessage);
     console.log('추출된 쇼핑 아이템:', shoppingItems);
@@ -127,15 +127,17 @@ export async function processRAG(
     if (shoppingItems.length > 0) {
       try {
         console.log('🗺️ RAG에서 경로 데이터 생성 중...');
+        console.log('🚨🚨🚨 RAG에서 createRouteData 호출 직전:', shoppingItems); // ← 이 줄 추가!
         routeData = await createRouteData(shoppingItems); // 🔧 await 추가
-        
+        console.log('🚨🚨🚨 RAG에서 createRouteData 호출 완료:', !!routeData); // ← 이 줄 추가!
+
         if (routeData) {
           console.log('✅ RAG 경로 데이터 생성 완료:', {
             items: routeData.items?.length || 0,
             route: routeData.route?.length || 0,
             distance: routeData.total_distance || 0,
           });
-          
+
           // 🔧 JSON 직렬화 테스트
           try {
             const jsonString = JSON.stringify(routeData);
@@ -206,12 +208,12 @@ export async function processRAG(
         assistantResponse = JSON.stringify(content);
       }
     }
-    
+
     // 메모리에 대화 저장
     await addToMemory(userId, userMessage, assistantResponse);
 
     console.log('RAG 처리 완료');
-    
+
     // 🔧 최종 반환 전 routeData 확인
     if (routeData) {
       console.log('🔧 RAG 최종 반환 전 routeData 확인:', {
@@ -221,7 +223,7 @@ export async function processRAG(
         routeLength: routeData.route?.length,
       });
     }
-    
+
     return {
       answer: assistantResponse,
       sources: sources.length > 0 ? sources : [],
@@ -245,7 +247,7 @@ export async function processRAG(
       if (items.length > 0) {
         console.log('🔧 오류 발생, 백업 경로 데이터 생성 시도...');
         fallbackRouteData = await createRouteData(items); // 🔧 await 추가
-        
+
         if (fallbackRouteData) {
           console.log('✅ 백업 경로 데이터 생성 성공');
         }

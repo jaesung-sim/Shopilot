@@ -10,6 +10,29 @@ interface ExtendedAppProps extends AppProps {
   };
 }
 
+// 🔧 ROSLIB 로드 이벤트 타입 정의
+interface ROSLIBLoadEvent extends CustomEvent {
+  detail: {
+    loaded: boolean;
+    manual?: boolean;
+    url?: string;
+    version?: string;
+  };
+}
+
+// 🔧 타입 안전한 ROSLIB 체크 함수
+const checkROSLIBExists = (): boolean => {
+  return typeof window !== 'undefined' && window.ROSLIB !== undefined;
+};
+
+// 🔧 타입 안전한 ROSLIB 버전 가져오기
+const getROSLIBVersion = (): string => {
+  if (checkROSLIBExists() && window.ROSLIB) {
+    return window.ROSLIB.version || 'Unknown';
+  }
+  return 'Not Available';
+};
+
 export default function App({ Component, pageProps }: ExtendedAppProps) {
   const [isROSLIBLoaded, setIsROSLIBLoaded] = useState(false);
   const [loadAttempts, setLoadAttempts] = useState(0);
@@ -19,8 +42,8 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
     if (typeof window === 'undefined') return;
 
     // 이미 로드되어 있는지 확인
-    const checkExistingROSLIB = () => {
-      if ((window as any).ROSLIB) {
+    const checkExistingROSLIB = (): boolean => {
+      if (checkROSLIBExists()) {
         console.log('✅ ROSLIB이 이미 로드되어 있습니다');
         setIsROSLIBLoaded(true);
         return true;
@@ -40,7 +63,7 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
 
     // 5초 후에도 로드되지 않으면 수동 로드 시도
     const timeout = setTimeout(() => {
-      if (!(window as any).ROSLIB) {
+      if (!checkROSLIBExists()) {
         console.log('⚠️ ROSLIB 자동 로드 실패, 수동 로드 시도');
         loadROSLIBManually();
       }
@@ -52,21 +75,21 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
     };
   }, []);
 
-  const loadROSLIBManually = () => {
+  const loadROSLIBManually = (): void => {
     if (loadAttempts >= 3) {
       console.error('❌ ROSLIB 로드 시도 3회 실패');
       return;
     }
 
-    setLoadAttempts(prev => prev + 1);
+    setLoadAttempts((prev) => prev + 1);
 
     const urls = [
       'https://static.robotwebtools.org/roslibjs/current/roslib.min.js',
       'https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js',
-      'https://unpkg.com/roslib@1/build/roslib.min.js'
+      'https://unpkg.com/roslib@1/build/roslib.min.js',
     ];
 
-    const tryLoadFromURL = (urlIndex: number) => {
+    const tryLoadFromURL = (urlIndex: number): void => {
       if (urlIndex >= urls.length) {
         console.error('❌ 모든 ROSLIB URL 시도 실패');
         return;
@@ -79,22 +102,21 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
       script.onload = () => {
         console.log(`✅ ROSLIB.js 수동 로드 성공 (${urls[urlIndex]})`);
         setIsROSLIBLoaded(true);
-        
+
         // 전역 이벤트 발생
-        window.dispatchEvent(
-          new CustomEvent('roslibLoaded', {
-            detail: {
-              loaded: true,
-              manual: true,
-              url: urls[urlIndex],
-              version: (window as any).ROSLIB?.version || 'Unknown',
-            },
-          }),
-        );
+        const event: ROSLIBLoadEvent = new CustomEvent('roslibLoaded', {
+          detail: {
+            loaded: true,
+            manual: true,
+            url: urls[urlIndex],
+            version: getROSLIBVersion(),
+          },
+        });
+        window.dispatchEvent(event);
       };
 
-      script.onerror = () => {
-        console.error(`❌ ROSLIB 로드 실패: ${urls[urlIndex]}`);
+      script.onerror = (error: Event | string) => {
+        console.error(`❌ ROSLIB 로드 실패: ${urls[urlIndex]}`, error);
         document.head.removeChild(script);
         tryLoadFromURL(urlIndex + 1);
       };
@@ -105,24 +127,23 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
     tryLoadFromURL(0);
   };
 
-  const handleROSLIBLoad = () => {
+  const handleROSLIBLoad = (): void => {
     console.log('✅ ROSLIB.js Script 태그 로드 완료');
-    
+
     // 약간의 지연 후 확인 (스크립트 실행 시간 고려)
     setTimeout(() => {
-      if ((window as any).ROSLIB) {
+      if (checkROSLIBExists()) {
         setIsROSLIBLoaded(true);
         console.log('✅ ROSLIB 객체 확인됨');
-        
+
         // 전역 이벤트 발생
-        window.dispatchEvent(
-          new CustomEvent('roslibLoaded', {
-            detail: {
-              loaded: true,
-              version: (window as any).ROSLIB?.version || 'Unknown',
-            },
-          }),
-        );
+        const event: ROSLIBLoadEvent = new CustomEvent('roslibLoaded', {
+          detail: {
+            loaded: true,
+            version: getROSLIBVersion(),
+          },
+        });
+        window.dispatchEvent(event);
       } else {
         console.warn('⚠️ Script 로드되었으나 ROSLIB 객체가 없음');
         loadROSLIBManually();
@@ -130,7 +151,7 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
     }, 100);
   };
 
-  const handleROSLIBError = (e: any) => {
+  const handleROSLIBError = (e: Event): void => {
     console.error('❌ ROSLIB.js Script 태그 로드 실패:', e);
     loadROSLIBManually();
   };
@@ -140,7 +161,7 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
       {/* ROSLIB.js 로드 - 여러 방법 시도 */}
       <Script
         src="https://static.robotwebtools.org/roslibjs/current/roslib.min.js"
-        strategy="afterInteractive"  // beforeInteractive → afterInteractive로 변경
+        strategy="afterInteractive"
         onLoad={handleROSLIBLoad}
         onError={handleROSLIBError}
       />
@@ -167,6 +188,11 @@ export default function App({ Component, pageProps }: ExtendedAppProps) {
           {!isROSLIBLoaded && (
             <div style={{ fontSize: '10px', marginTop: '2px' }}>
               시도: {loadAttempts}/3
+            </div>
+          )}
+          {isROSLIBLoaded && (
+            <div style={{ fontSize: '10px', marginTop: '2px' }}>
+              v{getROSLIBVersion()}
             </div>
           )}
         </div>

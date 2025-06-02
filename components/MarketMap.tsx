@@ -1,6 +1,6 @@
 // components/MarketMap.tsx - 원본 좌표로 로봇 위치 표시
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { RouteData, Product } from '@/interfaces/route';
 import { deduplicateRouteByLocation } from '@/lib/utils';
 
@@ -79,6 +79,29 @@ const MarketMap: React.FC<MarketMapProps> = ({
   };
 
   const clampedPosition = getClampedRobotPosition();
+
+  // MarketMap.tsx의 컴포넌트 내부에 추가 (기존 useEffect 근처에)
+  useEffect(() => {
+    if (routeData) {
+      console.log('=== MarketMap routeData 전체 구조 ===');
+      console.log(JSON.stringify(routeData, null, 2));
+
+      console.log('=== route[0] 구조 ===');
+      console.log('route[0]:', routeData.route?.[0]);
+      console.log('pathPoints 존재:', !!routeData.route?.[0]?.pathPoints);
+      console.log('pathPoints 길이:', routeData.route?.[0]?.pathPoints?.length);
+      console.log('pathPoints 내용:', routeData.route?.[0]?.pathPoints);
+
+      console.log('=== 전체 route 배열 확인 ===');
+      routeData.route?.forEach((item, index) => {
+        console.log(`route[${index}]:`, {
+          location: item.location,
+          hasPathPoints: !!item.pathPoints,
+          pathPointsLength: item.pathPoints?.length || 0,
+        });
+      });
+    }
+  }, [routeData]);
 
   return (
     <div className="flex flex-col h-full bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -228,24 +251,48 @@ const MarketMap: React.FC<MarketMapProps> = ({
               </g>
             )}
 
-            {/* 경로 선 표시 - 기존 좌표 그대로 */}
+            {/* A* 경로 표시 */}
             {uniqueRoute.map((item, index) => {
-              if (index === 0) return null;
-              const prev = uniqueRoute[index - 1];
+              // pathPoints가 있으면 A* 경로 사용, 없으면 직선 사용
+              if (item.pathPoints && item.pathPoints.length > 1) {
+                // A* 경로 포인트들을 선으로 연결
+                return item.pathPoints.map((point, pointIndex) => {
+                  if (pointIndex === 0) return null;
+                  const prevPoint = item.pathPoints[pointIndex - 1];
 
-              return (
-                <line
-                  key={`line-${index}`}
-                  x1={prev.coordinates.x}
-                  y1={prev.coordinates.y}
-                  x2={item.coordinates.x}
-                  y2={item.coordinates.y}
-                  stroke="#4f46e5"
-                  strokeWidth="3"
-                  strokeDasharray="5,5"
-                  opacity="0.8"
-                />
-              );
+                  return (
+                    <line
+                      key={`astar-${index}-${pointIndex}`}
+                      x1={prevPoint.x}
+                      y1={prevPoint.y}
+                      x2={point.x}
+                      y2={point.y}
+                      stroke="#4f46e5"
+                      strokeWidth="3"
+                      strokeDasharray="5,5"
+                      opacity="0.8"
+                    />
+                  );
+                });
+              } else {
+                // A* 경로가 없으면 기존 직선 방식
+                if (index === 0) return null;
+                const prev = uniqueRoute[index - 1];
+
+                return (
+                  <line
+                    key={`line-${index}`}
+                    x1={prev.coordinates.x}
+                    y1={prev.coordinates.y}
+                    x2={item.coordinates.x}
+                    y2={item.coordinates.y}
+                    stroke="#ff6b6b" // 직선은 다른 색으로 구분
+                    strokeWidth="3"
+                    strokeDasharray="5,5"
+                    opacity="0.8"
+                  />
+                );
+              }
             })}
 
             {/* 경로 포인트 표시 - 기존 좌표 그대로 */}
@@ -316,7 +363,7 @@ const MarketMap: React.FC<MarketMapProps> = ({
                     fontSize="8"
                     fontWeight="bold"
                   >
-                    🤖
+                    🛒
                   </text>
                 </g>
 
