@@ -1,4 +1,5 @@
 // lib/improvedProductDatabase.ts - A* 경로 통합 버전
+import { optimizeRouteWithTSP } from './tspOptimization';
 
 import { Product, RoutePoint, RouteData } from '@/interfaces/route';
 import { searchVectorDB } from './vectorstore';
@@ -190,36 +191,36 @@ function getCoordinatesBySectionName(
   sectionName: string,
 ): { x: number; y: number } | null {
   const nameToCoordinates: Record<string, { x: number; y: number }> = {
-    '조미료 매대': { x: 205, y: 225 },
-    '냉장·냉동 매대': { x: 205, y: 275 },
-    '가공육 매대': { x: 205, y: 325 },
-    '즉석식품 매대': { x: 192, y: 360 },
-    '통조림 매대': { x: 275, y: 360 },
-    '기타 식품 매대': { x: 325, y: 360 },
-    '건강식품 매대': { x: 375, y: 360 },
-    '유아·영유아 매대': { x: 425, y: 360 },
-    '과자·스낵 매대': { x: 475, y: 360 },
-    '음료·주류 매대': { x: 525, y: 360 },
-    '신선세트 매대': { x: 575, y: 360 },
-    '과일·채소 매대': { x: 670, y: 360 },
+    '조미료 매대': { x: 207, y: 225 },
+    '냉장·냉동 매대': { x: 207, y: 275 },
+    '가공육 매대': { x: 207, y: 325 },
+    '즉석식품 매대': { x: 207, y: 358 },
+    '통조림 매대': { x: 275, y: 358 },
+    '기타 식품 매대': { x: 325, y: 358 },
+    '건강식품 매대': { x: 375, y: 358 },
+    '유아·영유아 매대': { x: 425, y: 358 },
+    '과자·스낵 매대': { x: 475, y: 358 },
+    '음료·주류 매대': { x: 525, y: 358 },
+    '신선세트 매대': { x: 575, y: 358 },
+    '과일·채소 매대': { x: 670, y: 358 },
     '정육 매대': { x: 670, y: 323 },
     '수산 매대': { x: 670, y: 255 },
-    '생활용품 매대': { x: 555, y: 242 },
-    '반려동물 매대': { x: 555, y: 142 },
-    '자동차용품 매대': { x: 536, y: 84 },
-    '주방용품 매대': { x: 422, y: 113 },
+    '생활용품 매대': { x: 552, y: 242 },
+    '반려동물 매대': { x: 552, y: 142 },
+    '자동차용품 매대': { x: 552, y: 84 },
+    '주방용품 매대': { x: 429, y: 113 },
     '욕실/청소용품 매대': { x: 500, y: 120 },
-    '기타 매대': { x: 277, y: 306 },
-    '의약품/의료기기 매대': { x: 340, y: 265 },
-    '문구/완구 매대': { x: 410, y: 265 },
-    '디지털기기 매대': { x: 480, y: 265 },
-    '영상·음향기기 매대': { x: 550, y: 265 },
-    '생활가전 매대': { x: 620, y: 265 },
-    '가구 매대': { x: 340, y: 345 },
-    '침구·인테리어 매대': { x: 410, y: 345 },
-    '패션·의류 매대': { x: 480, y: 345 },
-    '스포츠의류 매대': { x: 550, y: 345 },
-    '가정의류/잡화 매대': { x: 620, y: 345 },
+    '기타 매대': { x: 246, y: 261 },
+    '의약품/의료기기 매대': { x: 340, y: 261 },
+    '문구/완구 매대': { x: 410, y: 261 },
+    '디지털기기 매대': { x: 480, y: 261 },
+    '영상·음향기기 매대': { x: 550, y: 261 },
+    '생활가전 매대': { x: 620, y: 261 },
+    '가구 매대': { x: 340, y: 344 },
+    '침구·인테리어 매대': { x: 410, y: 344 },
+    '패션·의류 매대': { x: 480, y: 344 },
+    '스포츠의류 매대': { x: 550, y: 344 },
+    '가정의류/잡화 매대': { x: 620, y: 344 },
   };
 
   const baseCoord = nameToCoordinates[sectionName];
@@ -413,6 +414,7 @@ export async function processShoppingListFromVector(
 }
 
 // 🔧 A* 알고리즘을 이용한 경로 최적화
+/*
 export function optimizeRouteWithAstar(items: ShoppingItem[]): ShoppingItem[] {
   console.log('🧭 A* 알고리즘을 이용한 경로 최적화 시작');
 
@@ -456,6 +458,14 @@ export function optimizeRouteWithAstar(items: ShoppingItem[]): ShoppingItem[] {
   });
 
   return optimizedItems;
+}*/
+
+// 🆕 새로운 TSP 기반 함수로 교체
+export function optimizeRouteWithAstar(items: ShoppingItem[]): ShoppingItem[] {
+  console.log('🧭 TSP 알고리즘을 이용한 경로 최적화 시작');
+  
+  // TSP 기반 최적화 호출
+  return optimizeRouteWithTSP(items);
 }
 
 // 🔧 최종 경로 데이터 생성 - A* 알고리즘 적용
@@ -649,7 +659,161 @@ export function convertRouteToRosCoordinates(routeData: RouteData): RouteData {
   return convertedRoute;
 }
 
-// 백워드 호환성을 위한 기존 함수들
-export const createRouteData = createRouteDataFromVectorWithAstar;
+// ✅ 메인 함수를 A* 버전으로 완전 교체
+export async function createRouteData(
+  items: string[],
+): Promise<RouteData | null> {
+  console.log('🔥🔥🔥 createRouteData 함수 진입 - A* 알고리즘 사용');
+  console.log('입력 아이템:', items);
+
+  if (!items || items.length === 0) {
+    console.log('❌ 입력 아이템이 없습니다');
+    return null;
+  }
+
+  console.log('🗺️ A* 알고리즘 기반 경로 생성 시작:', items);
+
+  try {
+    // 1. 벡터 DB에서 쇼핑 아이템 처리
+    const shoppingItems = await processShoppingListFromVector(items);
+
+    if (shoppingItems.length === 0) {
+      console.log('❌ 처리된 쇼핑 아이템이 없습니다');
+      return null;
+    }
+
+    // 2. A* 알고리즘으로 경로 최적화
+    const optimizedRoute = optimizeRouteWithAstar(shoppingItems);
+
+    // 3. 전체 경로 생성 (A* 알고리즘 사용)
+    const walkableAreaMap = getWalkableMap();
+    const storeCoordinates = optimizedRoute.map((item) => item.coordinates);
+
+    const fullPath = createOptimalShoppingRoute(
+      START_POINT,
+      storeCoordinates,
+      END_POINT,
+      walkableAreaMap,
+    );
+
+    console.log(`🛤️ A* 전체 경로 생성: ${fullPath.length}개 포인트`);
+
+    if (fullPath.length === 0) {
+      console.error('❌ A* 알고리즘으로 경로를 찾을 수 없음');
+      return null;
+    }
+
+    // 4. RouteData 객체 구성
+    const routeItems: Product[] = [];
+    const routePoints: RoutePoint[] = [];
+
+    // 시작점 추가
+    routePoints.push({
+      order: 0,
+      item: '시작',
+      location: '주차장',
+      section: '0',
+      coordinates: START_POINT,
+      pathPoints: fullPath.slice(0, 1).map((point) => ({
+        x: point.x,
+        y: point.y,
+        id: 'start-point',
+      })),
+    });
+
+    // 매대별 경로 포인트 할당
+    let pathIndex = 1;
+    optimizedRoute.forEach((item, index) => {
+      // 상품 정보 추가
+      item.productNames.forEach((name) => {
+        routeItems.push({
+          name: name,
+          location: item.sectionName,
+          section: item.sectionId.toString(),
+          coordinates: item.coordinates,
+        });
+      });
+
+      // 이 매대까지의 경로 포인트들 찾기
+      const targetCoord = item.coordinates;
+      let endIndex = pathIndex;
+
+      // A* 경로에서 해당 매대에 가장 가까운 지점 찾기
+      let minDistance = Number.MAX_SAFE_INTEGER;
+      for (let i = pathIndex; i < fullPath.length; i++) {
+        const dx = fullPath[i].x - targetCoord.x;
+        const dy = fullPath[i].y - targetCoord.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          endIndex = i + 1;
+        }
+
+        if (distance > minDistance && i > pathIndex + 3) {
+          break;
+        }
+      }
+
+      // 경로 포인트 추가 (pathPoints 포함)
+      routePoints.push({
+        order: index + 1,
+        item: item.productNames.join(', '),
+        location: item.sectionName,
+        section: item.sectionId.toString(),
+        coordinates: item.coordinates,
+        pathPoints: fullPath.slice(pathIndex, endIndex).map((point, i) => ({
+          x: point.x,
+          y: point.y,
+          id: `path-${index}-${pathIndex + i}`,
+        })),
+      });
+
+      pathIndex = endIndex;
+    });
+
+    // 종착점 추가
+    routePoints.push({
+      order: routePoints.length,
+      item: '결제',
+      location: '계산대',
+      section: '999',
+      coordinates: END_POINT,
+      pathPoints: fullPath.slice(pathIndex).map((point, i) => ({
+        x: point.x,
+        y: point.y,
+        id: `path-checkout-${pathIndex + i}`,
+      })),
+    });
+
+    // A* 경로 기준 총 거리 계산
+    let totalDistance = 0;
+    for (let i = 0; i < fullPath.length - 1; i++) {
+      const dx = fullPath[i + 1].x - fullPath[i].x;
+      const dy = fullPath[i + 1].y - fullPath[i].y;
+      totalDistance += Math.sqrt(dx * dx + dy * dy);
+    }
+
+    const result = {
+      items: routeItems,
+      route: routePoints,
+      total_distance: Math.round(totalDistance),
+    };
+
+    console.log('✅ A* 기반 경로 생성 완료:', {
+      아이템수: result.items.length,
+      경로수: result.route.length,
+      총거리: result.total_distance,
+      A스타포인트수: fullPath.length,
+    });
+
+    return result;
+  } catch (error) {
+    console.error('❌ A* 기반 경로 생성 실패:', error);
+    return null;
+  }
+}
+
+// 기존 함수들 유지 (호환성)
 export const processShoppingList = processShoppingListFromVector;
 export const findSectionByProduct = findSectionByProductFromVector;

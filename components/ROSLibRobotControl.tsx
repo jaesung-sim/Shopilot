@@ -1,15 +1,13 @@
-// components/EnhancedROSLibRobotControl.tsx - 좌표 변환 및 A* 경로 지원
+// components/SmartAutoRobotControl.tsx - 스마트 자동 모드 (테스트 버튼 제거)
 
 import React, { useState, useEffect, useRef } from 'react';
 import { RouteData } from '@/interfaces/route';
 import { deduplicateRouteByLocation } from '@/lib/utils';
 import {
   coordinateTransform,
-  rosToWeb,
   webToRos,
   addCalibrationPoint,
   loadPredefinedCalibrationPoints,
-  generateTestTransform,
 } from '@/lib/coordinateTransform';
 
 interface ROSLibRobotControlProps {
@@ -43,9 +41,9 @@ const getROSLIB = (): typeof ROSLIB | null => {
   return null;
 };
 
-const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
+const SmartAutoRobotControl: React.FC<ROSLibRobotControlProps> = ({
   routeData,
-  nucIP = '172.19.30.218',
+  nucIP = '172.19.17.21',
   isROSLIBLoaded = false,
   onRobotPositionUpdate,
 }) => {
@@ -55,34 +53,28 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
   const [robotPosition, setRobotPosition] = useState<RobotPosition | null>(
     null,
   );
-  const [notifications, setNotifications] = useState<string[]>([]);
   const [connectionAttempts, setConnectionAttempts] = useState(0);
 
-  // 🔧 좌표 변환 상태
-  const [transformEnabled, setTransformEnabled] = useState(false);
-  const [transformAccuracy, setTransformAccuracy] = useState(0);
-  const [calibrationMode, setCalibrationMode] = useState(false);
-  const [pendingCalibration, setPendingCalibration] = useState<{
-    id: string;
-    description: string;
-    webCoord: { x: number; y: number };
-  } | null>(null);
-
-  // 매대별 이동 상태
+  // 🔧 스마트 자동 모드 상태
   const [currentStoreIndex, setCurrentStoreIndex] = useState(0);
   const [isNavigating, setIsNavigating] = useState(false);
-  const [currentPathIndex, setCurrentPathIndex] = useState(0); // A* 경로 추적
+  const [currentPathIndex, setCurrentPathIndex] = useState(0);
+  const [autoModeActive, setAutoModeActive] = useState(false);
+  const [navigationProgress, setNavigationProgress] = useState(0);
 
-  // 타입 안전한 refs
+  // 좌표 변환 상태
+  const [transformEnabled, setTransformEnabled] = useState(false);
+
+  // refs
   const rosRef = useRef<ROSLIB.Ros | null>(null);
   const goalPublisherRef = useRef<ROSLIB.Topic | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const autoNavigationIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // 좌표 변환 상태 업데이트
   useEffect(() => {
     const params = coordinateTransform.getTransformParameters();
     setTransformEnabled(params.enabled);
-    setTransformAccuracy(params.accuracy || 0);
   }, []);
 
   // ROSLIB 로드 상태 감지
@@ -93,7 +85,6 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       if (isROSLIBAvailable()) {
         console.log('✅ ROSLIB 객체 확인됨');
         setIsROSLIBReady(true);
-        addNotification('ROSLIB.js 준비 완료');
         return true;
       }
       return false;
@@ -127,27 +118,20 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
     }
   }, [isROSLIBReady, nucIP]);
 
-  const addNotification = (message: string): void => {
-    console.log('📢', message);
-    setNotifications((prev) => {
-      const newNotifications = [
-        ...prev,
-        `${new Date().toLocaleTimeString()}: ${message}`,
-      ];
-      return newNotifications.slice(-5);
-    });
-
-    setTimeout(() => {
-      setNotifications((prev) => prev.slice(1));
-    }, 5000);
-  };
+  // 🔧 백그라운드 캘리브레이션 (UI 없음)
+  useEffect(() => {
+    if (
+      isROSLIBReady &&
+      coordinateTransform.getCalibrationPoints().length < 3
+    ) {
+      console.log('🔧 백그라운드 캘리브레이션 설정...');
+      loadPredefinedCalibrationPoints();
+    }
+  }, [isROSLIBReady]);
 
   const initializeROSConnection = async (): Promise<void> => {
     const ROSLIB = getROSLIB();
-    if (!isROSLIBReady || !ROSLIB) {
-      addNotification('ROSLIB가 준비되지 않았습니다');
-      return;
-    }
+    if (!isROSLIBReady || !ROSLIB) return;
 
     if (isConnecting) return;
 
@@ -164,8 +148,6 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       }
 
       const rosUrl = `ws://${nucIP}:9090`;
-      addNotification(`ROS 연결 시도: ${rosUrl}`);
-
       rosRef.current = new ROSLIB.Ros({ url: rosUrl });
 
       rosRef.current.on('connection', () => {
@@ -173,7 +155,6 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
         setIsConnected(true);
         setIsConnecting(false);
         setConnectionAttempts(0);
-        addNotification('ROS2 연결 성공!');
         setupROSTopics();
       });
 
@@ -181,8 +162,6 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
         console.error('❌ ROS2 연결 오류:', error);
         setIsConnected(false);
         setIsConnecting(false);
-        addNotification(`ROS2 연결 오류: ${error?.message || 'Unknown error'}`);
-
         if (connectionAttempts < 3) {
           scheduleReconnect();
         }
@@ -192,8 +171,6 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
         console.log('🔌 ROS2 연결 끊김');
         setIsConnected(false);
         setIsConnecting(false);
-        addNotification('ROS2 연결 끊김');
-
         if (connectionAttempts < 3) {
           scheduleReconnect();
         }
@@ -201,9 +178,6 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
     } catch (error) {
       console.error('ROS 초기화 오류:', error);
       setIsConnecting(false);
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      addNotification(`ROS 초기화 실패: ${errorMessage}`);
     }
   };
 
@@ -213,10 +187,6 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
     }
 
     const delay = Math.min(3000 * connectionAttempts, 10000);
-    addNotification(
-      `${delay / 1000}초 후 재연결 시도... (${connectionAttempts}/3)`,
-    );
-
     reconnectTimeoutRef.current = setTimeout(() => {
       if (!isConnected && connectionAttempts < 3) {
         initializeROSConnection();
@@ -229,7 +199,7 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
     if (!rosRef.current || !ROSLIB) return;
 
     try {
-      // 픽셀 좌표 토픽 구독 (로봇 위치 수신)
+      // 픽셀 좌표 토픽 구독 (로봇 위치 수신) - 변환 안함
       const pixelTopicSub = new ROSLIB.Topic({
         ros: rosRef.current,
         name: '/robot_pixel_position',
@@ -239,51 +209,20 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       pixelTopicSub.subscribe((message: ROSLIB.geometry_msgs.Point) => {
         console.log('📍 픽셀 좌표 수신:', message);
 
-        // 🔧 ROS 좌표를 웹 좌표로 변환
-        const webCoords = rosToWeb({ x: message.x, y: message.y });
-
         const newPosition: RobotPosition = {
-          x: webCoords.x,
-          y: webCoords.y,
+          x: message.x,
+          y: message.y,
           angle: 0,
           timestamp: Date.now(),
           type: 'pixel',
-          raw: { original: message, transformed: webCoords },
+          raw: {
+            original: message,
+            transformed: { x: message.x, y: message.y },
+          },
         };
 
         setRobotPosition(newPosition);
         if (onRobotPositionUpdate) onRobotPositionUpdate(newPosition);
-
-        // 🔧 캘리브레이션 모드인 경우 대기 중인 포인트 처리
-        if (calibrationMode && pendingCalibration) {
-          addCalibrationPoint(
-            pendingCalibration.id,
-            pendingCalibration.description,
-            pendingCalibration.webCoord,
-            { x: message.x, y: message.y },
-          );
-
-          setPendingCalibration(null);
-          setCalibrationMode(false);
-          addNotification(
-            `캘리브레이션 포인트 추가: ${pendingCalibration.description}`,
-          );
-
-          // 변환 상태 업데이트
-          const params = coordinateTransform.getTransformParameters();
-          setTransformEnabled(params.enabled);
-          setTransformAccuracy(params.accuracy || 0);
-        }
-
-        if (transformEnabled) {
-          addNotification(
-            `위치 수신: ROS(${message.x.toFixed(1)}, ${message.y.toFixed(
-              1,
-            )}) → 웹(${webCoords.x.toFixed(1)}, ${webCoords.y.toFixed(1)})`,
-          );
-        } else {
-          addNotification(`픽셀 위치 수신: (${message.x}, ${message.y})`);
-        }
       });
 
       // 목표 좌표 퍼블리셔 설정
@@ -293,12 +232,9 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
         messageType: 'geometry_msgs/Point',
       });
 
-      addNotification('토픽 설정 완료: 위치 수신 + 목표 전송');
+      console.log('✅ 토픽 설정 완료');
     } catch (error) {
       console.error('토픽 설정 오류:', error);
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      addNotification(`토픽 설정 실패: ${errorMessage}`);
     }
   };
 
@@ -310,174 +246,111 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
   ): boolean => {
     const ROSLIB = getROSLIB();
     if (!rosRef.current || !goalPublisherRef.current || !ROSLIB) {
-      addNotification('ROS 연결이 필요합니다');
       return false;
     }
 
     try {
-      // 🔧 웹 좌표를 ROS 좌표로 변환
-      const rosCoords = webToRos({ x: webX, y: webY });
+      const roundedX = Math.round(webX);
+      const roundedY = Math.round(webY);
 
       const goalMessage = new ROSLIB.Message({
-        x: rosCoords.x,
-        y: rosCoords.y,
+        x: roundedX,
+        y: roundedY,
         z: 0.0,
       });
 
       goalPublisherRef.current.publish(goalMessage);
 
-      addNotification(
-        `🎯 목표 전송: ${
-          description || `웹(${webX}, ${webY})`
-        } → ROS(${rosCoords.x.toFixed(1)}, ${rosCoords.y.toFixed(1)})`,
-      );
-
-      console.log('🎯 좌표 변환된 목표 전송:', {
+      console.log('🎯 목표 전송:', {
         description,
-        webCoord: { x: webX, y: webY },
-        rosCoord: rosCoords,
-        transformEnabled,
+        coordinates: { x: roundedX, y: roundedY },
       });
 
       return true;
     } catch (error) {
       console.error('목표 전송 오류:', error);
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      addNotification(`목표 전송 실패: ${errorMessage}`);
       return false;
     }
   };
 
-  // 🔧 A* 경로를 따라 단계적 이동
-  const goToNextStoreWithPath = (): void => {
+  // 🚀 스마트 자동 네비게이션
+  const startSmartNavigation = (): void => {
     if (!routeData || !routeData.route || routeData.route.length === 0) {
-      addNotification('이동할 매대가 없습니다');
       return;
     }
 
     const uniqueRoute = deduplicateRouteByLocation(routeData.route);
 
     if (currentStoreIndex >= uniqueRoute.length) {
-      addNotification('모든 매대를 완료했습니다!');
       return;
     }
 
     const targetStore = uniqueRoute[currentStoreIndex];
 
-    // A* 경로가 있는 경우 경로를 따라 이동
-    if (targetStore.pathPoints && targetStore.pathPoints.length > 0) {
-      addNotification(
-        `📍 ${currentStoreIndex + 1}/${uniqueRoute.length}: ${
-          targetStore.location
-        }으로 A* 경로 이동 시작 (${targetStore.pathPoints.length}개 포인트)`,
-      );
+    setAutoModeActive(true);
+    setIsNavigating(true);
 
-      setCurrentPathIndex(0);
-      setIsNavigating(true);
-
-      // 첫 번째 경로 포인트로 이동
-      const firstPoint = targetStore.pathPoints[0];
-      sendSingleGoal(
-        firstPoint.x,
-        firstPoint.y,
-        `${targetStore.location} 경로 1/${targetStore.pathPoints.length}`,
-      );
-    } else {
-      // A* 경로가 없는 경우 직접 이동
-      const success = sendSingleGoal(
-        targetStore.coordinates.x,
-        targetStore.coordinates.y,
-        targetStore.location,
-      );
-
-      if (success) {
-        setIsNavigating(true);
-        addNotification(
-          `📍 ${currentStoreIndex + 1}/${uniqueRoute.length}: ${
-            targetStore.location
-          }으로 직접 이동`,
-        );
-      }
-    }
-  };
-
-  // 🔧 A* 경로의 다음 포인트로 이동
-  const goToNextPathPoint = (): void => {
-    if (!routeData || !routeData.route) return;
-
-    const uniqueRoute = deduplicateRouteByLocation(routeData.route);
-    if (currentStoreIndex >= uniqueRoute.length) return;
-
-    const targetStore = uniqueRoute[currentStoreIndex];
-    if (!targetStore.pathPoints || targetStore.pathPoints.length === 0) return;
-
-    const nextPathIndex = currentPathIndex + 1;
-
-    if (nextPathIndex < targetStore.pathPoints.length) {
-      const nextPoint = targetStore.pathPoints[nextPathIndex];
-      const success = sendSingleGoal(
-        nextPoint.x,
-        nextPoint.y,
-        `${targetStore.location} 경로 ${nextPathIndex + 1}/${
-          targetStore.pathPoints.length
-        }`,
-      );
-
-      if (success) {
-        setCurrentPathIndex(nextPathIndex);
-        addNotification(
-          `🛤️ 다음 경로 포인트로 이동 (${nextPathIndex + 1}/${
-            targetStore.pathPoints.length
-          })`,
-        );
-      }
-    } else {
-      addNotification(`✅ ${targetStore.location} 경로 완료!`);
-      setCurrentPathIndex(0);
-    }
-  };
-
-  // 매대 완료 및 다음으로
-  const completeCurrentStore = (): void => {
-    if (!routeData || !routeData.route) return;
-
-    const uniqueRoute = deduplicateRouteByLocation(routeData.route);
-
-    if (currentStoreIndex < uniqueRoute.length) {
-      addNotification(`✅ ${uniqueRoute[currentStoreIndex].location} 완료`);
-      setCurrentStoreIndex((prev) => prev + 1);
-      setCurrentPathIndex(0);
-      setIsNavigating(false);
-    }
-  };
-
-  // 🔧 캘리브레이션 포인트 추가 시작
-  const startCalibration = (
-    webX: number,
-    webY: number,
-    description: string,
-  ): void => {
-    const id = `calib_${Date.now()}`;
-    setPendingCalibration({
-      id,
-      description,
-      webCoord: { x: webX, y: webY },
-    });
-    setCalibrationMode(true);
-    addNotification(
-      `캘리브레이션 시작: ${description} - 로봇을 해당 위치로 이동 후 위치 데이터를 기다리는 중...`,
+    const success = sendSingleGoal(
+      targetStore.coordinates.x,
+      targetStore.coordinates.y,
+      `${targetStore.location} 최종 목적지지`,
     );
+    
+
+    if (success) {
+      console.log(`🚀 ${targetStore.location}으로 이동 시작`);
+
+
+      // 단일 목표이므로 즉시 완료
+      setTimeout(() => {
+        setIsNavigating(false);
+        setAutoModeActive(false);
+      }, 1000);
+    }
   };
 
-  const stopRobot = (): void => {
+  // 🔄 자동 경로 진행
+  const startAutoPathProgression = (
+    pathPoints: any[],
+    locationName: string,
+  ): void => {
+    let currentIndex = 0;
+
+    const progressInterval = setInterval(() => {
+      currentIndex++;
+
+      if (currentIndex < pathPoints.length) {
+        const nextPoint = pathPoints[currentIndex];
+        sendSingleGoal(nextPoint.x, nextPoint.y, `${locationName} 진행`);
+
+        setCurrentPathIndex(currentIndex);
+        setNavigationProgress((currentIndex / pathPoints.length) * 100);
+      } else {
+        // 경로 완료
+        clearInterval(progressInterval);
+        setIsNavigating(false);
+        setAutoModeActive(false);
+        setNavigationProgress(100);
+        console.log(`✅ ${locationName} 도착 완료`);
+      }
+    }, 3000); // 3초마다 다음 포인트로 이동
+
+    autoNavigationIntervalRef.current = progressInterval;
+  };
+
+  // ⏹️ 긴급 정지
+  const emergencyStop = (): void => {
     const ROSLIB = getROSLIB();
-    if (!rosRef.current || !ROSLIB) {
-      addNotification('ROS 연결이 필요합니다');
-      return;
-    }
+    if (!rosRef.current || !ROSLIB) return;
 
     try {
+      // 자동 진행 중단
+      if (autoNavigationIntervalRef.current) {
+        clearInterval(autoNavigationIntervalRef.current);
+        autoNavigationIntervalRef.current = null;
+      }
+
+      // 로봇 정지 명령
       const cmdVel = new ROSLIB.Topic({
         ros: rosRef.current,
         name: '/cmd_vel',
@@ -490,36 +363,65 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
       });
 
       cmdVel.publish(stopTwist);
-      addNotification('정지 명령 전송');
+
       setIsNavigating(false);
+      setAutoModeActive(false);
       setCurrentPathIndex(0);
+      setNavigationProgress(0);
+
+      console.log('🛑 긴급 정지 실행');
     } catch (error) {
       console.error('정지 명령 오류:', error);
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      addNotification(`정지 명령 실패: ${errorMessage}`);
     }
+  };
+
+  // ✅ 매대 완료
+  const completeCurrentStore = (): void => {
+    if (!routeData || !routeData.route) return;
+
+    const uniqueRoute = deduplicateRouteByLocation(routeData.route);
+
+    if (currentStoreIndex < uniqueRoute.length) {
+      setCurrentStoreIndex((prev) => prev + 1);
+      setCurrentPathIndex(0);
+      setNavigationProgress(0);
+      setIsNavigating(false);
+      setAutoModeActive(false);
+
+      console.log(`✅ ${uniqueRoute[currentStoreIndex].location} 완료`);
+    }
+  };
+
+  // 경로 초기화
+  const resetNavigation = (): void => {
+    if (autoNavigationIntervalRef.current) {
+      clearInterval(autoNavigationIntervalRef.current);
+    }
+
+    setCurrentStoreIndex(0);
+    setCurrentPathIndex(0);
+    setNavigationProgress(0);
+    setIsNavigating(false);
+    setAutoModeActive(false);
   };
 
   // 현재 경로 정보
   const uniqueRoute = routeData?.route
     ? deduplicateRouteByLocation(routeData.route)
     : [];
-
   const currentStore =
     currentStoreIndex < uniqueRoute.length
       ? uniqueRoute[currentStoreIndex]
       : null;
+  const totalPoints = currentStore?.pathPoints?.length || 1;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden h-full">
       {/* 헤더 */}
       <div className="bg-gradient-to-r from-green-600 to-blue-600 text-white p-4">
         <div className="flex justify-between items-center">
-          <h3 className="font-bold text-lg">
-            🤖 Scout Mini 제어 (A* + 좌표변환)
-          </h3>
-          <div className="flex items-center gap-4 text-sm">
+          <h3 className="font-bold text-base">🤖 Shopilot 제어</h3>
+          <div className="flex items-center gap-4 text-xs">
             <div className="flex items-center gap-1">
               <div
                 className={`w-3 h-3 rounded-full ${
@@ -543,414 +445,152 @@ const EnhancedROSLibRobotControl: React.FC<ROSLibRobotControlProps> = ({
                 {isConnected ? '연결됨' : isConnecting ? '연결중' : '끊김'}
               </span>
             </div>
-            <div className="flex items-center gap-1">
-              <div
-                className={`w-3 h-3 rounded-full ${
-                  transformEnabled ? 'bg-blue-400' : 'bg-gray-400'
-                }`}
-              />
-              <span>변환: {transformEnabled ? 'ON' : 'OFF'}</span>
-              {transformEnabled && (
-                <span className="text-xs">
-                  (±{transformAccuracy.toFixed(1)}px)
-                </span>
-              )}
-            </div>
-            {robotPosition && (
-              <div className="flex items-center gap-1">
-                <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse" />
-                <span>위치: {robotPosition.type.toUpperCase()}</span>
-              </div>
-            )}
+            {robotPosition && <div className="flex items-center gap-1"></div>}
           </div>
         </div>
       </div>
 
-      {/* 알림 영역 */}
-      {notifications.length > 0 && (
-        <div
-          className="bg-blue-50 border-b p-3 overflow-y-auto"
-          style={{ maxHeight: '120px' }}
-        >
-          {notifications.map((notification, index) => (
-            <div key={index} className="text-xs text-blue-800 mb-1 font-mono">
-              📢 {notification}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 캘리브레이션 모드 알림 */}
-      {calibrationMode && pendingCalibration && (
-        <div className="bg-yellow-50 border border-yellow-200 p-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-yellow-500 rounded-full animate-pulse" />
-              <span className="text-yellow-800 font-medium">
-                캘리브레이션 모드: {pendingCalibration.description}
-              </span>
-            </div>
-            <button
-              onClick={() => {
-                setCalibrationMode(false);
-                setPendingCalibration(null);
-              }}
-              className="text-yellow-600 hover:text-yellow-800"
-            >
-              ❌ 취소
-            </button>
-          </div>
-          <div className="text-xs text-yellow-700 mt-1">
-            로봇을 웹 좌표 ({pendingCalibration.webCoord.x},{' '}
-            {pendingCalibration.webCoord.y})에 해당하는 실제 위치로 이동 후 위치
-            데이터를 기다리는 중...
-          </div>
-        </div>
-      )}
-
-      <div className="p-4 space-y-4">
-        {/* 🔧 좌표 변환 제어 패널 */}
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-          <h4 className="font-semibold text-purple-800 mb-3">
-            🔄 좌표 변환 시스템
-          </h4>
-
-          <div className="grid grid-cols-2 gap-3 mb-3">
-            <div className="bg-white rounded p-2 border">
-              <div className="text-xs text-gray-600">변환 상태</div>
-              <div
-                className={`font-medium ${
-                  transformEnabled ? 'text-green-600' : 'text-red-600'
-                }`}
-              >
-                {transformEnabled ? '✅ 활성화' : '❌ 비활성화'}
-              </div>
-              {transformEnabled && (
-                <div className="text-xs text-gray-500">
-                  정확도: ±{transformAccuracy.toFixed(1)}px
-                </div>
-              )}
-            </div>
-
-            <div className="bg-white rounded p-2 border">
-              <div className="text-xs text-gray-600">캘리브레이션 포인트</div>
-              <div className="font-medium text-blue-600">
-                {coordinateTransform.getCalibrationPoints().length}개
-              </div>
-              <div className="text-xs text-gray-500">(최소 3개 필요)</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => startCalibration(218, 160, '주차장 시작점')}
-              disabled={!isConnected || calibrationMode}
-              className="px-3 py-2 bg-purple-500 text-white rounded text-sm hover:bg-purple-600 disabled:bg-gray-400"
-            >
-              📍 주차장 캘리브레이션
-            </button>
-
-            <button
-              onClick={() => startCalibration(325, 227, '계산대')}
-              disabled={!isConnected || calibrationMode}
-              className="px-3 py-2 bg-purple-500 text-white rounded text-sm hover:bg-purple-600 disabled:bg-gray-400"
-            >
-              🛒 계산대 캘리브레이션
-            </button>
-
-            <button
-              onClick={() => loadPredefinedCalibrationPoints()}
-              disabled={calibrationMode}
-              className="px-3 py-2 bg-orange-500 text-white rounded text-sm hover:bg-orange-600 disabled:bg-gray-400"
-            >
-              🧪 테스트 포인트 로드
-            </button>
-
-            <button
-              onClick={() => {
-                coordinateTransform.clearCalibrationPoints();
-                setTransformEnabled(false);
-                setTransformAccuracy(0);
-              }}
-              disabled={calibrationMode}
-              className="px-3 py-2 bg-red-500 text-white rounded text-sm hover:bg-red-600 disabled:bg-gray-400"
-            >
-              🗑️ 캘리브레이션 초기화
-            </button>
-          </div>
-        </div>
-
-        {/* 🔧 A* 경로 기반 매대별 이동 제어 */}
+      <div className="p-4 space-y-1">
+        {/* 🎯 스마트 자동 모드 제어 */}
         {uniqueRoute.length > 0 && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <h4 className="font-semibold text-blue-800 mb-3">
-              🗺️ A* 경로 기반 매대별 이동 ({currentStoreIndex + 1}/
+              🗺️ 스마트 자동 네비게이션 ({currentStoreIndex + 1}/
               {uniqueRoute.length})
             </h4>
 
             {/* 현재 목표 매대 정보 */}
             {currentStore && (
               <div className="bg-white rounded p-3 mb-3 border">
-                <div className="font-medium text-gray-800 mb-1">
-                  📍 현재 목표: {currentStore.location}
+                <div className="font-medium text-gray-800 mb-2">
+                  📍 목표: {currentStore.location}
                 </div>
-                <div className="text-sm text-gray-600">
-                  좌표: ({currentStore.coordinates.x},{' '}
-                  {currentStore.coordinates.y})
-                </div>
-                <div className="text-sm text-gray-600">
+                <div className="text-sm text-gray-600 mb-2">
                   물품: {currentStore.item}
                 </div>
-                {currentStore.pathPoints &&
-                  currentStore.pathPoints.length > 0 && (
-                    <div className="text-sm text-green-600">
-                      🛤️ A* 경로: {currentStore.pathPoints.length}개 포인트
-                      {isNavigating && (
-                        <span className="ml-2">
-                          (진행: {currentPathIndex + 1}/
-                          {currentStore.pathPoints.length})
-                        </span>
-                      )}
+
+                {/* 진행률 표시 */}
+                {isNavigating && autoModeActive && (
+                  <div className="mb-2">
+                    <div className="flex justify-between text-xs text-gray-600 mb-1">
+                      <span>
+                        진행률: {currentPathIndex + 1}/{totalPoints}
+                      </span>
+                      <span>{Math.round(navigationProgress)}%</span>
                     </div>
-                  )}
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${navigationProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* A* 경로 제어 버튼들 */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* 제어 버튼들 */}
+            <div className="grid grid-cols-1 gap-3">
+              {/* 메인 네비게이션 버튼 */}
               <button
-                onClick={goToNextStoreWithPath}
+                onClick={startSmartNavigation}
                 disabled={
-                  !isConnected || currentStoreIndex >= uniqueRoute.length
+                  !isConnected ||
+                  isNavigating ||
+                  currentStoreIndex >= uniqueRoute.length
                 }
-                className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
+                className={`py-4 px-4 rounded-lg font-semibold text-white transition-colors ${
                   !isConnected || currentStoreIndex >= uniqueRoute.length
                     ? 'bg-gray-400 cursor-not-allowed'
+                    : isNavigating
+                    ? 'bg-orange-500 cursor-not-allowed'
                     : 'bg-green-500 hover:bg-green-600'
                 }`}
               >
                 {currentStoreIndex >= uniqueRoute.length
-                  ? '✅ 완료'
-                  : '🚀 매대로 A* 이동'}
+                  ? '🎉 모든 매대 완료!'
+                  : isNavigating && autoModeActive
+                  ? `🔄 이동 중... (${currentPathIndex + 1}/${totalPoints})`
+                  : `🚀 ${currentStore?.location}으로 이동`}
               </button>
 
-              <button
-                onClick={goToNextPathPoint}
-                disabled={
-                  !isConnected ||
-                  !currentStore?.pathPoints ||
-                  currentPathIndex >=
-                    (currentStore?.pathPoints?.length || 0) - 1
-                }
-                className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
-                  !isConnected ||
-                  !currentStore?.pathPoints ||
-                  currentPathIndex >=
-                    (currentStore?.pathPoints?.length || 0) - 1
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-blue-500 hover:bg-blue-600'
-                }`}
-              >
-                🛤️ 다음 경로점
-              </button>
+              {/* 하단 제어 버튼들 */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  onClick={emergencyStop}
+                  disabled={!isConnected}
+                  className={`py-2 px-3 rounded-lg font-semibold text-white transition-colors ${
+                    !isConnected
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-red-500 hover:bg-red-600'
+                  }`}
+                >
+                  ⏹️ 정지
+                </button>
 
-              <button
-                onClick={completeCurrentStore}
-                disabled={currentStoreIndex >= uniqueRoute.length}
-                className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
-                  currentStoreIndex >= uniqueRoute.length
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-indigo-500 hover:bg-indigo-600'
-                }`}
-              >
-                ✅ 매대 완료
-              </button>
+                <button
+                  onClick={completeCurrentStore}
+                  disabled={currentStoreIndex >= uniqueRoute.length}
+                  className={`py-2 px-3 rounded-lg font-semibold text-white transition-colors ${
+                    currentStoreIndex >= uniqueRoute.length
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-indigo-500 hover:bg-indigo-600'
+                  }`}
+                >
+                  ✅ 매대 완료
+                </button>
 
-              <button
-                onClick={stopRobot}
-                disabled={!isConnected}
-                className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
-                  !isConnected
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-red-500 hover:bg-red-600'
-                }`}
-              >
-                ⏹️ 정지
-              </button>
-            </div>
-
-            {/* 경로 초기화 */}
-            <div className="mt-3 pt-3 border-t border-blue-200">
-              <button
-                onClick={() => {
-                  setCurrentStoreIndex(0);
-                  setCurrentPathIndex(0);
-                  setIsNavigating(false);
-                  addNotification('A* 경로 초기화됨');
-                }}
-                disabled={!isConnected}
-                className={`w-full py-2 px-4 rounded-lg font-semibold text-white transition-colors ${
-                  !isConnected
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-gray-500 hover:bg-gray-600'
-                }`}
-              >
-                🔄 경로 초기화
-              </button>
+                <button
+                  onClick={resetNavigation}
+                  disabled={!isConnected}
+                  className={`py-2 px-3 rounded-lg font-semibold text-white transition-colors ${
+                    !isConnected
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-gray-500 hover:bg-gray-600'
+                  }`}
+                >
+                  🔄 초기화
+                </button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* 테스트 버튼 */}
-        <div className="grid grid-cols-2 gap-4">
-          <button
-            onClick={() => sendSingleGoal(100, 100, '테스트 이동')}
-            disabled={!isConnected}
-            className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
-              !isConnected
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-green-500 hover:bg-green-600'
-            }`}
-          >
-            🚀 테스트 이동 (100, 100)
-          </button>
-
-          <button
-            onClick={stopRobot}
-            disabled={!isConnected}
-            className={`py-3 px-4 rounded-lg font-semibold text-white transition-colors ${
-              !isConnected
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-red-500 hover:bg-red-600'
-            }`}
-          >
-            ⏹️ 정지
-          </button>
-        </div>
-
-        {/* 로봇 위치 정보 */}
+        {/* 로봇 위치 정보 (간소화) */}
         {robotPosition && (
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h4 className="font-semibold mb-2 flex items-center">
-              📍 로봇 위치
-              <span
-                className={`ml-2 px-2 py-1 rounded text-xs ${
-                  robotPosition.type === 'pixel'
-                    ? 'bg-blue-100 text-blue-800'
-                    : 'bg-green-100 text-green-800'
-                }`}
-              >
-                {robotPosition.type.toUpperCase()}
-              </span>
-            </h4>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <h4 className="font-semibold mb-2 text-sm">📍 로봇 위치</h4>
             <div className="text-sm space-y-1">
               <div className="font-mono">
-                <strong>웹 표시 X:</strong> {robotPosition.x.toFixed(1)}
-              </div>
-              <div className="font-mono">
-                <strong>웹 표시 Y:</strong> {robotPosition.y.toFixed(1)}
+                위치: ({robotPosition.x.toFixed(1)},{' '}
+                {robotPosition.y.toFixed(1)})
               </div>
               <div className="text-gray-500 text-xs">
                 업데이트:{' '}
                 {new Date(robotPosition.timestamp).toLocaleTimeString()}
               </div>
-
-              {/* 원본 vs 변환된 좌표 비교 */}
-              {transformEnabled && robotPosition.raw?.original && (
-                <div className="mt-2 pt-2 border-t border-gray-300">
-                  <div className="text-xs text-gray-600">
-                    <div>
-                      <strong>원본 ROS:</strong> (
-                      {robotPosition.raw.original.x.toFixed(1)},{' '}
-                      {robotPosition.raw.original.y.toFixed(1)})
-                    </div>
-                    <div>
-                      <strong>변환 후:</strong> ({robotPosition.x.toFixed(1)},{' '}
-                      {robotPosition.y.toFixed(1)})
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )}
 
-        {/* 디버그 정보 */}
+        {/* 간소화된 시스템 상태 */}
         <div className="bg-gray-100 border border-gray-300 rounded-lg p-3">
-          <h4 className="font-semibold text-sm mb-2">🔧 시스템 상태</h4>
+          <h4 className="font-semibold text-sm mb-2">🔧 연결 상태</h4>
           <div className="text-xs space-y-1">
-            <div>ROSLIB Ready: {isROSLIBReady ? '✅' : '❌'}</div>
-            <div>ROS Connected: {isConnected ? '✅' : '❌'}</div>
-            <div>Goal Publisher: {goalPublisherRef.current ? '✅' : '❌'}</div>
-            <div>Robot Position: {robotPosition ? '✅' : '❌'}</div>
-            <div>Position Type: {robotPosition?.type || 'N/A'}</div>
-            <div>Transform Enabled: {transformEnabled ? '✅' : '❌'}</div>
-            <div>Transform Accuracy: ±{transformAccuracy.toFixed(1)}px</div>
             <div>
-              Calibration Points:{' '}
-              {coordinateTransform.getCalibrationPoints().length}개
+              ROSLIB: {isROSLIBReady ? '✅' : '❌'} | ROS2:{' '}
+              {isConnected ? '✅' : '❌'}
             </div>
             <div>
-              Current Store: {currentStoreIndex + 1}/{uniqueRoute.length}
+              매대: {currentStoreIndex + 1}/{uniqueRoute.length} | 변환:{' '}
+              {transformEnabled ? '✅' : '❌'}
             </div>
-            <div>Navigating: {isNavigating ? '✅' : '❌'}</div>
-            <div>
-              Path Index: {currentPathIndex + 1}/
-              {currentStore?.pathPoints?.length || 0}
-            </div>
-            <div>NUC IP: {nucIP}:9090</div>
+            <div>NUC: {nucIP}:9090</div>
           </div>
         </div>
-
-        {/* 개발자 도구 */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <h4 className="font-semibold text-yellow-800 mb-2">
-              🔧 개발자 도구
-            </h4>
-            <div className="space-y-2">
-              <button
-                onClick={() => generateTestTransform()}
-                className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded text-sm hover:bg-yellow-300"
-              >
-                테스트 변환식 적용
-              </button>
-
-              <button
-                onClick={() => {
-                  coordinateTransform.setTransformParameters({
-                    enabled: false,
-                  });
-                  setTransformEnabled(false);
-                }}
-                className="ml-2 px-3 py-1 bg-red-200 text-red-800 rounded text-sm hover:bg-red-300"
-              >
-                변환 비활성화
-              </button>
-
-              <button
-                onClick={() => {
-                  const accuracy = coordinateTransform.testAccuracy();
-                  addNotification(
-                    `정확도 테스트: 평균 오차 ${accuracy.averageError.toFixed(
-                      1,
-                    )}px, 최대 오차 ${accuracy.maxError.toFixed(1)}px`,
-                  );
-                }}
-                className="ml-2 px-3 py-1 bg-blue-200 text-blue-800 rounded text-sm hover:bg-blue-300"
-              >
-                정확도 테스트
-              </button>
-            </div>
-
-            <div className="mt-2 text-xs text-yellow-700">
-              * 실제 운영 시에는 정합점 기반 캘리브레이션을 완료하세요
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
 };
 
-export default EnhancedROSLibRobotControl;
+export default SmartAutoRobotControl;

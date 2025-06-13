@@ -41,88 +41,71 @@ export function createWalkableAreaMap(): WalkableAreaMap {
     }
   }
 
-  // 🎯 그리드 좌표 기반 정확한 통행 가능 영역 정의
   const walkableAreas = [
-    // 1. 주차장 영역 (P 주변)
-    { x1: 200, y1: 180, x2: 275, y2: 275, cost: 1 },
+    /* A)  */
+    { x1: 200, y1: 129, x2: 220, y2: 363, cost: 1 },
 
-    // 2. 상단 가로 복도 (매대 20 ↔ 매대 21-30 사이)
-    { x1: 275, y1: 300, x2: 820, y2: 380, cost: 1 },
-
-    // 3. 하단 가로 복도 (매대 21-30 ↔ 매대 5-12 사이)
-    { x1: 280, y1: 480, x2: 820, y2: 510, cost: 1 },
-
-    // 4. 왼쪽 세로 복도 (매대 20 왼쪽)
-    { x1: 280, y1: 300, x2: 300, y2: 510, cost: 1 },
-
-    // 5. 오른쪽 세로 복도 (매대 13 왼쪽, 정육 매대 옆)
-    { x1: 750, y1: 300, x2: 770, y2: 510, cost: 1 },
-
-    // 6. 계산대 접근 통로
-    { x1: 400, y1: 200, x2: 700, y2: 300, cost: 1 },
-
-    // 7. 우측 상단 영역 (매대 14-19 접근)
-    { x1: 700, y1: 100, x2: 800, y2: 300, cost: 1 },
-
-    // 8. 주차장과 상단 복도 연결
-    { x1: 280, y1: 280, x2: 400, y2: 320, cost: 1 },
-
-    // 9. 계산대 앞 공간
-    { x1: 400, y1: 280, x2: 600, y2: 320, cost: 1 },
-
-    // 10. 매대 1-3 접근 통로 (왼쪽)
-    { x1: 180, y1: 280, x2: 280, y2: 380, cost: 1 },
-
-    // 11. 매대 4번 접근 통로 (하단 왼쪽)
-    { x1: 180, y1: 480, x2: 280, y2: 520, cost: 1 },
-
-    // 12. 매대 12번 접근 통로 (하단 오른쪽)
-    { x1: 770, y1: 480, x2: 800, y2: 520, cost: 1 },
+    /* B)  */
+    { x1: 220, y1: 195, x2: 275, y2: 270, cost: 1 },
+    /* C)
+     */
+    { x1: 287, y1: 223, x2: 419, y2: 268, cost: 1 },
+    // D)
+    { x1: 220, y1: 342, x2: 673, y2: 362, cost: 1 },
+    // E)
+    { x1: 274, y1: 268, x2: 300, y2: 343, cost: 1 },
+    // F)
+    { x1: 419, y1: 246, x2: 539, y2: 269, cost: 1 },
+    // G)
+    { x1: 652, y1: 250, x2: 673, y2: 341, cost: 1 },
+    // H)
+    { x1: 537, y1: 250, x2: 652, y2: 269, cost: 1 },
+    // I)
+    { x1: 540, y1: 122, x2: 559, y2: 248, cost: 1 },
+    // J)
+    { x1: 423, y1: 103, x2: 558, y2: 121, cost: 1 },
+    // K)
+    { x1: 512, y1: 81, x2: 558, y2: 101, cost: 1 },
   ];
-
-  // 통행 가능 영역을 그리드에 적용
   walkableAreas.forEach((area) => {
+    // “x2, y2”는 깨끗하게 덮이도록 -1px 만큼 내부 그리드까지 포함시키겠습니다.
     const startX = Math.floor(area.x1 / MAP_CONFIG.cellSize);
-    const endX = Math.floor(area.x2 / MAP_CONFIG.cellSize);
+    const endX = Math.floor((area.x2 - 1) / MAP_CONFIG.cellSize);
     const startY = Math.floor(area.y1 / MAP_CONFIG.cellSize);
-    const endY = Math.floor(area.y2 / MAP_CONFIG.cellSize);
+    const endY = Math.floor((area.y2 - 1) / MAP_CONFIG.cellSize);
 
-    for (let y = startY; y <= endY && y < gridHeight; y++) {
-      for (let x = startX; x <= endX && x < gridWidth; x++) {
-        if (grid[y] && grid[y][x]) {
-          grid[y][x].walkable = true;
-          grid[y][x].cost = area.cost;
+    for (let gy = startY; gy <= endY && gy < gridHeight; gy++) {
+      for (let gx = startX; gx <= endX && gx < gridWidth; gx++) {
+        if (grid[gy] && grid[gy][gx]) {
+          grid[gy][gx].walkable = true;
+          grid[gy][gx].cost = area.cost;
         }
       }
     }
   });
 
   // 🚫 명시적으로 매대 21-30 구역을 장애물로 설정 (확실히 차단)
+
   const obstacleAreas = [
-    // 매대 21-30 구역 (완전 차단)
-    { x1: 300, y1: 270, x2: 750, y2: 340 },
+    { x1: 223, y1: 274, x2: 269, y2: 338 },
 
-    // 매대 20 구역
-    { x1: 225, y1: 270, x2: 275, y2: 340 },
+    { x1: 306, y1: 274, x2: 648, y2: 337 },
 
-    // 매대 13 구역
-    { x1: 750, y1: 380, x2: 800, y2: 480 },
-
-    // 매대 5-12 구역
-    { x1: 250, y1: 360, x2: 675, y2: 550 },
+    { x1: 424, y1: 167, x2: 532, y2: 240 },
+    { x1: 392, y1: 132, x2: 534, y2: 156 },
   ];
 
   obstacleAreas.forEach((area) => {
     const startX = Math.floor(area.x1 / MAP_CONFIG.cellSize);
-    const endX = Math.floor(area.x2 / MAP_CONFIG.cellSize);
+    const endX = Math.floor((area.x2 - 1) / MAP_CONFIG.cellSize);
     const startY = Math.floor(area.y1 / MAP_CONFIG.cellSize);
-    const endY = Math.floor(area.y2 / MAP_CONFIG.cellSize);
+    const endY = Math.floor((area.y2 - 1) / MAP_CONFIG.cellSize);
 
-    for (let y = startY; y <= endY && y < gridHeight; y++) {
-      for (let x = startX; x <= endX && x < gridWidth; x++) {
-        if (grid[y] && grid[y][x]) {
-          grid[y][x].walkable = false;
-          grid[y][x].cost = 999;
+    for (let gy = startY; gy <= endY && gy < gridHeight; gy++) {
+      for (let gx = startX; gx <= endX && gx < gridWidth; gx++) {
+        if (grid[gy] && grid[gy][gx]) {
+          grid[gy][gx].walkable = false;
+          grid[gy][gx].cost = 999;
         }
       }
     }

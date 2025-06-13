@@ -48,7 +48,7 @@ const HomePage: React.FC<HomePageProps> = ({ isROSLIBLoaded = false }) => {
   const [routeData, setRouteData] = useState<RouteData | undefined>(undefined);
   const [robotPosition, setRobotPosition] = useState(undefined);
   const [activeTab, setActiveTab] = useState<'chat' | 'control'>('chat');
-  const [nucIP, setNucIP] = useState('172.19.30.218');
+  const [nucIP, setNucIP] = useState('172.19.17.21');
   const [isIPModalOpen, setIsIPModalOpen] = useState(false);
   const [hasNewRoute, setHasNewRoute] = useState(false);
 

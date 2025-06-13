@@ -1,4 +1,4 @@
-// components/ChatBot.tsx - 더미 데이터 제거, 실제 API 데이터만 사용
+// components/ChatBot.tsx - 음성 입력 기능이 통합된 버전
 import {
   useState,
   useRef,
@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { IMemberMessage, UserType } from '@/interfaces/message';
 import { RouteData } from '@/interfaces/route';
+import VoiceInput from './VoiceInput'; // 새로 생성한 음성 입력 컴포넌트
 
 // Props 인터페이스 정의
 interface ChatBotProps {
@@ -39,6 +40,7 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
     const [messageList, setMessageList] =
       useState<IMemberMessage[]>(initialMessages);
     const [isLoading, setIsLoading] = useState<boolean>(false);
+    const [voiceInputEnabled, setVoiceInputEnabled] = useState<boolean>(true); // 음성 입력 활성화 상태
 
     const messageEndRef = useRef<HTMLDivElement>(null);
 
@@ -75,13 +77,30 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
       }
     }, [messageList]);
 
-    // 메시지 전송 함수
-    const sendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
-      e.preventDefault();
+    // 브라우저 지원 여부 확인
+    useEffect(() => {
+      const checkVoiceSupport = () => {
+        const isSupported = !!(
+          navigator.mediaDevices &&
+          navigator.mediaDevices.getUserMedia &&
+          window.MediaRecorder
+        );
 
-      if (!message.trim() || isLoading) return;
+        setVoiceInputEnabled(isSupported);
 
-      const currentMessage = message.trim();
+        if (!isSupported) {
+          console.warn('⚠️ 이 브라우저는 음성 입력을 지원하지 않습니다');
+        }
+      };
+
+      checkVoiceSupport();
+    }, []);
+
+    // 메시지 전송 함수 (텍스트/음성 공통)
+    const sendMessage = async (messageText: string) => {
+      if (!messageText.trim() || isLoading) return;
+
+      const currentMessage = messageText.trim();
       console.log('📤 메시지 전송:', currentMessage, '| 사용자 ID:', userId);
 
       // 사용자 메시지를 즉시 추가
@@ -92,10 +111,9 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
         send_date: new Date(),
       };
 
-      // 메시지 리스트 업데이트 및 입력 필드 클리어
+      // 메시지 리스트 업데이트
       const updatedMessages = [...messageList, userMessage];
       setMessageList(updatedMessages);
-      setMessage('');
       setIsLoading(true);
 
       try {
@@ -144,14 +162,12 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
         const finalMessages = [...updatedMessages, botMessage];
         setMessageList(finalMessages);
 
-        // 🔧 실제 routeData만 사용 (더미 데이터 제거)
+        // 경로 데이터 처리
         console.log('🗺️ 수신된 routeData:', data.data?.routeData);
 
         if (data.data?.routeData && onRouteDataUpdate) {
-          // ✅ 데이터 검증
           const routeData = data.data.routeData;
 
-          // 🔧 상세한 디버깅 로그 추가
           console.log('🔍 routeData 상세 분석:', {
             전체구조: routeData,
             route_존재: !!routeData.route,
@@ -179,38 +195,23 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
 
             onRouteDataUpdate(routeData);
           } else {
-            console.warn('⚠️ 경로 데이터가 비어있거나 유효하지 않음:', {
-              routeData: routeData,
-              route키존재: 'route' in routeData,
-              route값: routeData.route,
-              조건체크: {
-                route존재: !!routeData.route,
-                배열여부: Array.isArray(routeData.route),
-                길이확인: routeData.route?.length > 0,
-              },
-            });
-
-            // 🔧 강제로 데이터 구조 확인
-            console.log(
-              '🔧 전체 routeData 구조:',
-              JSON.stringify(routeData, null, 2),
-            );
+            console.warn('⚠️ 경로 데이터가 비어있거나 유효하지 않음');
           }
         } else {
           console.log('ℹ️ 경로 데이터가 없음 - 일반 대화로 처리');
         }
 
-        // 디버그 정보 로깅 (개발 모드에서만)
+        // 디버그 정보 로깅
         if (process.env.NODE_ENV === 'development' && data.data?.debugInfo) {
           console.log('🔧 디버그 정보:', data.data.debugInfo);
         }
 
-        // ✅ API 응답에서 추출한 쇼핑 아이템 로깅
+        // 추출된 쇼핑 아이템 로깅
         if (data.data?.extractedItems) {
           console.log('🛒 추출된 쇼핑 아이템:', data.data.extractedItems);
         }
 
-        // ✅ 벡터 DB 검색 결과 로깅
+        // 벡터 DB 검색 결과 로깅
         if (data.data?.sources && data.data.sources.length > 0) {
           console.log('🔍 벡터 DB 검색 결과:', data.data.sources);
         }
@@ -236,6 +237,25 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
       }
     };
 
+    // 폼 전송 핸들러 (텍스트 입력)
+    const handleFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      await sendMessage(message);
+      setMessage(''); // 입력 필드 클리어
+    };
+
+    // 음성 입력 완료 핸들러
+    const handleVoiceInputReceived = async (recognizedText: string) => {
+      console.log('🎤 음성 입력 받음:', recognizedText);
+
+      // 입력 필드에 텍스트 설정
+      setMessage(recognizedText);
+
+      // 자동으로 메시지 전송
+      await sendMessage(recognizedText);
+      setMessage(''); // 입력 필드 클리어
+    };
+
     // 예시 메시지 입력 함수
     const insertExampleMessage = (exampleText: string) => {
       setMessage(exampleText);
@@ -251,6 +271,9 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
               <span className="font-semibold">쇼핑 어시스턴트</span>
               <div className="text-xs opacity-75">
                 메시지 {messageList.length}개 • ID: {userId.slice(-6)}
+                {voiceInputEnabled && (
+                  <span className="ml-2">🎤 음성입력 지원</span>
+                )}
               </div>
             </div>
           </div>
@@ -326,28 +349,35 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
 
         {/* 예시 메시지 버튼들 */}
         <div className="px-4 py-2 bg-gray-50 border-t">
-          <div className="text-xs text-gray-500 mb-2">💡 예시 메시지:</div>
+          <div className="text-xs text-gray-500 mb-2">
+            💡 다양한 매대 방문 예시:
+          </div>
           <div className="flex flex-wrap gap-2">
             {[
-              '바나나, 사과, 우유, 빵, 돼지고기 사고싶어',
-              '계란, 라면, 치즈 필요해',
-              '과자, 음료수, 햄 구매할게',
+              '바나나, 사과, 빵, 돼지고기, 라면, 워셔액, 색연필 필요해', // 과일→유제품→즉석식품→정육 (4개 매대)
+              '계란, 치즈, 햄, 과자, 음료수, 생선 사고싶어', // 정육→냉장→가공육→과자→음료→수산 (6개 매대)
+              '우유, 요구르트, 김치, 두부, 조미료, 세제 구매할게', // 냉장→즉석→조미료→생활용품 (4개 매대)
+              '사과, 당근, 양파, 쌀, 고기, 빵, 과자 사야해', // 과일→채소→쌀→정육→즉석→과자 (6개 매대)
             ].map((example, index) => (
               <button
                 key={index}
                 onClick={() => insertExampleMessage(example)}
-                className="px-2 py-1 bg-white border rounded text-xs hover:bg-gray-100 transition-colors"
+                className="px-2 py-1 bg-white border rounded text-xs hover:bg-gray-100 transition-colors flex-shrink-0"
                 disabled={isLoading}
+                title={`${example.split(',').length}개 물품 (여러 매대 방문)`}
               >
                 {example}
               </button>
             ))}
           </div>
+          <div className="text-xs text-gray-400 mt-1">
+            각 예시는 3-7개의 다른 매대를 방문하는 경로를 만듭니다
+          </div>
         </div>
 
-        {/* 입력 영역 */}
+        {/* 입력 영역 - 음성 입력 버튼 추가 */}
         <div className="border-t p-4 bg-white">
-          <form onSubmit={sendMessage} className="flex gap-2">
+          <form onSubmit={handleFormSubmit} className="flex gap-2">
             <input
               type="text"
               value={message}
@@ -356,6 +386,18 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
               className="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               disabled={isLoading}
             />
+
+            {/* 음성 입력 버튼 */}
+            {voiceInputEnabled && (
+              <div className="group">
+                <VoiceInput
+                  onVoiceResult={handleVoiceInputReceived} // 올바른 prop 이름
+                  disabled={isLoading} // 올바른 prop 이름
+                  className="hover:scale-105"
+                />
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={isLoading || !message.trim()}
@@ -374,7 +416,14 @@ const ChatBot = forwardRef<ChatBotRef, ChatBotProps>(
 
           {/* 도움말 */}
           <div className="mt-2 text-xs text-gray-500 flex items-center justify-between">
-            <span>💡 팁: 여러 물품을 쉼표(,)로 구분해서 입력하세요</span>
+            <div className="flex items-center gap-4">
+              <span>💡 팁: 여러 물품을 쉼표(,)로 구분해서 입력하세요</span>
+              {voiceInputEnabled && (
+                <span>
+                  🎤 마이크 버튼을 클릭하거나 스페이스바를 길게 누르세요
+                </span>
+              )}
+            </div>
             <span className="text-blue-500">세션 ID: {userId.slice(-6)}</span>
           </div>
         </div>

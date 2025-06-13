@@ -1,8 +1,9 @@
-// components/MarketMap.tsx - 원본 좌표로 로봇 위치 표시
+// components/MarketMap.tsx - A* 경로 시각화 추가
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { RouteData, Product } from '@/interfaces/route';
 import { deduplicateRouteByLocation } from '@/lib/utils';
+import { createWalkableAreaMap, WalkableAreaMap } from '@/lib/walkableAreaMap';
 
 interface RobotPosition {
   x: number;
@@ -32,7 +33,14 @@ const MarketMap: React.FC<MarketMapProps> = ({
 }) => {
   const [selectedItem, setSelectedItem] = useState<Product | null>(null);
   const [showDebugGrid, setShowDebugGrid] = useState(false);
+  const [showWalkableAreas, setShowWalkableAreas] = useState(false);
+  const [showAStarPath, setShowAStarPath] = useState(true); // 🆕 A* 경로 표시 상태
   const mapRef = useRef<HTMLDivElement>(null);
+
+  // 🆕 통행 가능 영역 맵 생성
+  const walkableMap = React.useMemo(() => {
+    return createWalkableAreaMap();
+  }, []);
 
   // 안전한 데이터 체크
   const hasValidRoute =
@@ -80,28 +88,104 @@ const MarketMap: React.FC<MarketMapProps> = ({
 
   const clampedPosition = getClampedRobotPosition();
 
-  // MarketMap.tsx의 컴포넌트 내부에 추가 (기존 useEffect 근처에)
-  useEffect(() => {
-    if (routeData) {
-      console.log('=== MarketMap routeData 전체 구조 ===');
-      console.log(JSON.stringify(routeData, null, 2));
+  // 🆕 통행 가능 영역 렌더링 함수
+  const renderWalkableAreas = () => {
+    if (!showWalkableAreas) return null;
 
-      console.log('=== route[0] 구조 ===');
-      console.log('route[0]:', routeData.route?.[0]);
-      console.log('pathPoints 존재:', !!routeData.route?.[0]?.pathPoints);
-      console.log('pathPoints 길이:', routeData.route?.[0]?.pathPoints?.length);
-      console.log('pathPoints 내용:', routeData.route?.[0]?.pathPoints);
+    const areas: JSX.Element[] = [];
 
-      console.log('=== 전체 route 배열 확인 ===');
-      routeData.route?.forEach((item, index) => {
-        console.log(`route[${index}]:`, {
-          location: item.location,
-          hasPathPoints: !!item.pathPoints,
-          pathPointsLength: item.pathPoints?.length || 0,
-        });
-      });
+    for (let y = 0; y < walkableMap.height; y++) {
+      for (let x = 0; x < walkableMap.width; x++) {
+        const cell = walkableMap.grid[y][x];
+
+        if (cell.walkable) {
+          const rectX = x * walkableMap.cellSize;
+          const rectY = y * walkableMap.cellSize;
+
+          // 비용에 따른 색상 구분
+          const fillColor = cell.cost === 1 ? '#10b981' : '#f59e0b'; // 일반 통로: 초록, 좁은 통로: 주황
+          const opacity = cell.cost === 1 ? 0.3 : 0.4;
+
+          areas.push(
+            <rect
+              key={`walkable-${x}-${y}`}
+              x={rectX}
+              y={rectY}
+              width={walkableMap.cellSize}
+              height={walkableMap.cellSize}
+              fill={fillColor}
+              opacity={opacity}
+              stroke="none"
+            />,
+          );
+        }
+      }
     }
-  }, [routeData]);
+
+    return <g id="walkable-areas">{areas}</g>;
+  };
+
+  // 🆕 A* 경로 포인트 렌더링 함수
+  const renderAStarPath = () => {
+    if (!showAStarPath || !hasValidRoute) return null;
+
+    console.log('🔍 A* 경로 렌더링 시도');
+    console.log('🔍 uniqueRoute:', uniqueRoute);
+
+    const pathElements: JSX.Element[] = [];
+
+    uniqueRoute.forEach((routePoint, routeIndex) => {
+      if (!routePoint.pathPoints || routePoint.pathPoints.length === 0) {
+        console.log(
+          `⚠️ RoutePoint ${routeIndex} (${routePoint.location})에 pathPoints 없음`,
+        );
+        return;
+      }
+
+      console.log(
+        `✅ RoutePoint ${routeIndex} (${routePoint.location}): ${routePoint.pathPoints.length}개 포인트`,
+      );
+
+      // A* 경로 선 그리기
+      const pathPoints = routePoint.pathPoints;
+      for (let i = 0; i < pathPoints.length - 1; i++) {
+        const current = pathPoints[i];
+        const next = pathPoints[i + 1];
+
+        pathElements.push(
+          <line
+            key={`astar-line-${routeIndex}-${i}`}
+            x1={current.x}
+            y1={current.y}
+            x2={next.x}
+            y2={next.y}
+            stroke="#10b981" // 초록색으로 A* 경로 표시
+            strokeWidth="4"
+            opacity="0.9"
+          />,
+        );
+      }
+
+      // A* 경로 포인트 작은 점들 그리기
+      pathPoints.forEach((point, pointIndex) => {
+        if (pointIndex % 3 === 0) {
+          // 3개마다 하나씩 표시
+          pathElements.push(
+            <circle
+              key={`astar-point-${routeIndex}-${pointIndex}`}
+              cx={point.x}
+              cy={point.y}
+              r="2"
+              fill="#10b981"
+              opacity="0.7"
+            />,
+          );
+        }
+      });
+    });
+
+    return <g id="astar-path">{pathElements}</g>;
+  };
 
   return (
     <div className="flex flex-col h-full bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -115,6 +199,26 @@ const MarketMap: React.FC<MarketMapProps> = ({
             title="디버그 그리드"
           >
             📐
+          </button>
+          {/* 🆕 통행 가능 영역 표시 버튼 */}
+          <button
+            onClick={() => setShowWalkableAreas(!showWalkableAreas)}
+            className={`p-1 hover:bg-blue-700 rounded text-xs transition-colors ${
+              showWalkableAreas ? 'bg-blue-700 text-white' : ''
+            }`}
+            title="통행 가능 영역 표시"
+          >
+            🟢
+          </button>
+          {/* 🆕 A* 경로 표시 버튼 */}
+          <button
+            onClick={() => setShowAStarPath(!showAStarPath)}
+            className={`p-1 hover:bg-blue-700 rounded text-xs transition-colors ${
+              showAStarPath ? 'bg-blue-700 text-white' : ''
+            }`}
+            title="A* 경로 표시"
+          >
+            🛤️
           </button>
           {/* 상태 표시 */}
           <div className="flex items-center gap-1 text-sm">
@@ -199,6 +303,9 @@ const MarketMap: React.FC<MarketMapProps> = ({
               pointerEvents: 'none',
             }}
           >
+            {/* 🆕 통행 가능 영역 렌더링 (다른 요소들보다 먼저) */}
+            {renderWalkableAreas()}
+
             {/* 디버그 그리드 */}
             {showDebugGrid && (
               <g opacity="0.5">
@@ -251,83 +358,68 @@ const MarketMap: React.FC<MarketMapProps> = ({
               </g>
             )}
 
-            {/* A* 경로 표시 */}
+            {/* 🆕 A* 경로 렌더링 (기존 경로보다 먼저) */}
+            {renderAStarPath()}
+
+            {/* 🔧 기존 직선 경로는 회색으로 변경하여 구분 */}
             {uniqueRoute.map((item, index) => {
-              // pathPoints가 있으면 A* 경로 사용, 없으면 직선 사용
-              if (item.pathPoints && item.pathPoints.length > 1) {
-                // A* 경로 포인트들을 선으로 연결
-                return item.pathPoints.map((point, pointIndex) => {
-                  if (pointIndex === 0) return null;
-                  const prevPoint = item.pathPoints[pointIndex - 1];
+              if (index === 0) return null;
+              const prev = uniqueRoute[index - 1];
 
-                  return (
-                    <line
-                      key={`astar-${index}-${pointIndex}`}
-                      x1={prevPoint.x}
-                      y1={prevPoint.y}
-                      x2={point.x}
-                      y2={point.y}
-                      stroke="#4f46e5"
-                      strokeWidth="3"
-                      strokeDasharray="5,5"
-                      opacity="0.8"
-                    />
-                  );
-                });
-              } else {
-                // A* 경로가 없으면 기존 직선 방식
-                if (index === 0) return null;
-                const prev = uniqueRoute[index - 1];
-
-                return (
-                  <line
-                    key={`line-${index}`}
-                    x1={prev.coordinates.x}
-                    y1={prev.coordinates.y}
-                    x2={item.coordinates.x}
-                    y2={item.coordinates.y}
-                    stroke="#ff6b6b" // 직선은 다른 색으로 구분
-                    strokeWidth="3"
-                    strokeDasharray="5,5"
-                    opacity="0.8"
-                  />
-                );
-              }
+              return (
+                <line
+                  key={`direct-line-${index}`}
+                  x1={prev.coordinates.x}
+                  y1={prev.coordinates.y}
+                  x2={item.coordinates.x}
+                  y2={item.coordinates.y}
+                  stroke="#94a3b8" // 회색으로 변경
+                  strokeWidth="2"
+                  strokeDasharray="10,5"
+                  opacity="0.3" // 투명도 낮춤
+                />
+              );
             })}
 
-            {/* 경로 포인트 표시 - 기존 좌표 그대로 */}
+            {/* 경로 포인트 표시 - 크기 축소 및 반투명 적용 */}
             {uniqueRoute.map((item, index) => {
               return (
                 <g key={`point-${index}`}>
                   <circle
                     cx={item.coordinates.x}
                     cy={item.coordinates.y}
-                    r="12"
+                    r="10"
                     fill="#4f46e5"
+                    fillOpacity="0.7"
                     stroke="white"
-                    strokeWidth="3"
+                    strokeWidth="2"
+                    strokeOpacity="0.9"
                   />
                   <text
                     x={item.coordinates.x}
-                    y={item.coordinates.y + 4}
+                    y={item.coordinates.y + 3}
                     textAnchor="middle"
                     fill="white"
-                    fontSize="10"
+                    fontSize="9"
                     fontWeight="bold"
+                    opacity="0.95"
                   >
                     {index + 1}
                   </text>
-                  {/* 매대 이름 라벨 */}
+                  {/* 매대 이름 라벨 - 반투명 적용 */}
                   <text
                     x={item.coordinates.x}
                     y={item.coordinates.y - 20}
                     textAnchor="middle"
                     fill="#4f46e5"
-                    fontSize="12"
+                    fontSize="11"
                     fontWeight="bold"
+                    opacity="0.8"
                   >
                     {item.location}
                   </text>
+                  {/* 🆕 A* 경로 포인트 개수 표시 - 더 작게 */}
+                 
                 </g>
               );
             })}
@@ -343,24 +435,24 @@ const MarketMap: React.FC<MarketMapProps> = ({
                 >
                   {/* 로봇 몸체 */}
                   <rect
-                    x="-15"
-                    y="-10"
-                    width="30"
-                    height="20"
-                    fill="#ff4444"
-                    stroke="#cc0000"
-                    strokeWidth="2"
-                    rx="4"
+                    x="-10"
+                    y="-7"
+                    width="20"
+                    height="14"
+                    fill="#4a90e2"
+                    stroke="#2563eb"
+                    strokeWidth="1.5"
+                    rx="3"
                   />
                   {/* 방향 표시 화살표 */}
-                  <polygon points="15,0 25,-5 25,5" fill="#cc0000" />
+                  <polygon points="10,0 18,-3 18,3" fill="#2563eb" />
                   {/* 로봇 아이콘 */}
                   <text
                     x="0"
-                    y="2"
+                    y="1"
                     textAnchor="middle"
                     fill="white"
-                    fontSize="8"
+                    fontSize="6"
                     fontWeight="bold"
                   >
                     🛒
@@ -369,31 +461,32 @@ const MarketMap: React.FC<MarketMapProps> = ({
 
                 {/* 로봇 정보 라벨 */}
                 <g
-                  transform={`translate(${clampedPosition.x + 20}, ${
-                    clampedPosition.y - 20
+                  transform={`translate(${clampedPosition.x + 15}, ${
+                    clampedPosition.y - 15
                   })`}
                 >
                   <rect
                     x="0"
                     y="0"
-                    width="140"
-                    height="60"
-                    fill="rgba(255, 255, 255, 0.95)"
-                    stroke="#ff4444"
+                    width="100"
+                    height="40"
+                    fill="rgba(255, 255, 255, 0.7)"
+                    stroke="rgba(74, 144, 226, 0.8)"
                     strokeWidth="1"
-                    rx="4"
+                    rx="3"
                   />
-                  <text x="5" y="12" fontSize="9" fill="#333" fontWeight="bold">
+                  <text x="4" y="10" fontSize="7" fill="#333" fontWeight="bold">
                     Scout Mini ({robotPosition?.type})
                   </text>
-                  <text x="5" y="24" fontSize="8" fill="#666">
+                  {/*<text x="5" y="24" fontSize="8" fill="#666">
                     원본: ({robotPosition?.x}, {robotPosition?.y})
                   </text>
-                  <text x="5" y="36" fontSize="8" fill="#666">
+                  */}
+                  <text x="4" y="22" fontSize="6" fill="#666">
                     표시: ({clampedPosition.x.toFixed(0)},{' '}
                     {clampedPosition.y.toFixed(0)})
                   </text>
-                  <text x="5" y="48" fontSize="7" fill="#666">
+                  <text x="4" y="32" fontSize="5" fill="#666">
                     {robotPosition &&
                       new Date(robotPosition.timestamp).toLocaleTimeString()}
                   </text>
@@ -556,6 +649,27 @@ const MarketMap: React.FC<MarketMapProps> = ({
                       {Math.round((routeData.total_distance || 0) / 100)}분
                     </span>
                   </div>
+                  {/* 🆕 A* 경로 정보 */}
+                  <div className="text-xs text-gray-600">
+                    A* 경로:{' '}
+                    <span
+                      className={`font-semibold ${
+                        showAStarPath ? 'text-green-600' : 'text-gray-400'
+                      }`}
+                    >
+                      {showAStarPath ? '표시됨' : '숨김'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    통행 영역:{' '}
+                    <span
+                      className={`font-semibold ${
+                        showWalkableAreas ? 'text-green-600' : 'text-gray-400'
+                      }`}
+                    >
+                      {showWalkableAreas ? '표시됨' : '숨김'}
+                    </span>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-1">
@@ -598,11 +712,15 @@ const MarketMap: React.FC<MarketMapProps> = ({
         )}
       </div>
 
-      {/* 맵 정보 */}
+      {/* 맵 정보 - 범례 추가 */}
       <div className="px-4 py-2 bg-gray-100 border-t text-xs text-gray-600 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <span>📐 그리드: 좌표 확인</span>
-          <span>🤖 로봇: 원본 좌표 표시</span>
+          <span>🟢 통행 영역: {showWalkableAreas ? 'ON' : 'OFF'}</span>
+          <span className="text-green-600">
+            🛤️ A* 경로: {showAStarPath ? 'ON' : 'OFF'}
+          </span>
+          <span className="text-gray-400">--- 직선 경로 (참고용)</span>
         </div>
         <div className="text-right">
           <span>
