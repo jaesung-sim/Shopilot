@@ -1,7 +1,12 @@
 # 🛒 Shopilot
 
-**Shopilot**은 대형 마트에서 사용하는 스마트 쇼핑 카트를 위한 **AI 기반 쇼핑 보조 시스템**입니다.  
+**Shopilot:youtube_logo:**은 대형 마트에서 사용하는 스마트 쇼핑 카트를 위한 **AI 기반 쇼핑 보조 시스템**입니다.  
 사용자는 웹 챗봇을 통해 구매할 물품을 입력하면, 로봇이 **최적 경로를 생성하고 자율 주행**하여 물품 매대로 안내합니다.
+
+[**시연영상▶️**](https://youtu.be/pP-fz-G6JYQ)
+
+<img src = "https://github.com/user-attachments/assets/75a20c28-3960-4295-a35a-dfd587f7dc11" width="25%">
+
 
 ---
 
