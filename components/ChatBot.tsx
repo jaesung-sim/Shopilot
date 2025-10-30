@@ -1,4 +1,3 @@
-// components/ChatBot.tsx - 음성 입력 기능이 통합된 버전
 import {
   useState,
   useRef,
@@ -8,7 +7,7 @@ import {
 } from 'react';
 import { IMemberMessage, UserType } from '@/interfaces/message';
 import { RouteData } from '@/interfaces/route';
-import VoiceInput from './VoiceInput'; // 새로 생성한 음성 입력 컴포넌트
+import VoiceInput from './VoiceInput';
 
 // Props 인터페이스 정의
 interface ChatBotProps {
